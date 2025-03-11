@@ -8,6 +8,7 @@ const CLIENT_ID = "client_123";
 socket.on("connect", () => {
     console.log(`[Client] Connected as ${CLIENT_ID}`);
     // Example: sending a message to a specific agent
+    socket.emit("register", { agentId: `${CLIENT_ID}`});
     socket.emit("message", {
         from: CLIENT_ID,
         to: "weather_agent",
