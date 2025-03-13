@@ -24,6 +24,18 @@ socket.on("connect", () => {
 // Listen for direct responses
 socket.on("message", (msg) => {
     console.log(`[Client] Received response:`, msg);
+    if(msg.data.asset) {
+        socket.emit("message", {
+            from: CLIENT_ID,
+            to: "waylay_agent",
+            data: { request: "runTemplate", template: "HVAC_filter_check_V2", variables: {
+                currentTemperature: msg.data.temperature.value,
+                airflow: msg.data.airflow.value,
+                energyUsage: msg.data.energy.value,
+                resource: msg.data.asset
+             }},
+        });
+    }
 });
 
 // Listen for broadcast messages via WebSocket
