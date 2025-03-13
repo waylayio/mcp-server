@@ -6,6 +6,7 @@
   "scripts": {
     "start:server": "node mcp_server.js",
     "start:weather": "node weather_agent.js",
+    "start:data": "node metrics_agent.js",
     "start:client": "node client.js"
   },
   "dependencies": {
