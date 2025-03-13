@@ -37,7 +37,7 @@ class MCPServer {
       // Agent registration
       socket.on("register", (data) => {
         this.agents.set(data.agentId, socket.id);
-        console.log(`Agent registered: ${data.agentId}`);
+        console.log(`Agent registered: ${data.agentId}` +  `Agent capabilities: ` + JSON.stringify(data.capabilities));
       });
 
       // Handle incoming messages from agents or clients
@@ -91,6 +91,16 @@ class MCPServer {
       });
     });
 
+    // Discovery Endpoint: List available agents and their capabilities
+    this.app.get("/agents", (req, res) => {
+        const activeAgents = Array.from(this.agents.entries()).map(([agentId, info]) => ({
+            agentId,
+            capabilities: info.capabilities
+        }));
+        res.json({ activeAgents });
+    });
+      
+
     // --- Broadcast Endpoint ---
     this.app.post("/broadcast", (req, res) => {
       const { message } = req.body;
@@ -108,11 +118,6 @@ class MCPServer {
       }
       console.log(`Broadcasting via SSE to ${this.clients.size} client(s)`);
       return res.json({ status: "Broadcast sent" });
-    });
-
-    // --- Endpoint to List Active Agents ---
-    this.app.get("/agents", (req, res) => {
-      res.json({ activeAgents: Array.from(this.agents.keys()) });
     });
   }
 

@@ -1,68 +1,103 @@
-// weather_agent.js
 const { io } = require("socket.io-client");
 const axios = require("axios");
 const { createClient } = require("redis");
 require("dotenv").config();
 
-const AGENT_ID = "weather_agent";
-const MCP_SERVER_URL = "http://localhost:3000";
-const WEATHER_API_KEY = process.env.WEATHER_API_KEY;
+class WeatherAgent {
+    constructor(agentId, serverUrl, weatherApiKey) {
+        this.agentId = agentId;
+        this.serverUrl = serverUrl;
+        this.weatherApiKey = weatherApiKey;
+        this.socket = io(serverUrl);
+        this.capabilities = [
+            {
+                name: "get_weather",
+                description: "Fetches the current weather for a given city.",
+                parameters: {
+                    city: { type: "string", required: true, description: "The name of the city to get weather for." }
+                },
+                returns: {
+                    temperature: { type: "number", description: "The current temperature in Celsius." },
+                    description: { type: "string", description: "A short description of the weather conditions." }
+                }
+            }
+        ];
+        this.redisClient = createClient();
 
-// Connect to Redis for caching
-const redisClient = createClient();
-redisClient.connect().catch(console.error);
+        this.init();
+    }
 
-const socket = io(MCP_SERVER_URL);
+    async init() {
+        // Connect to Redis
+        await this.redisClient.connect().catch(console.error);
 
-socket.on("connect", () => {
-    console.log(`[${AGENT_ID}] Connected to MCP Server`);
-    socket.emit("register", { agentId: AGENT_ID });
-});
+        this.socket.on("connect", () => {
+            console.log(`[${this.agentId}] Connected to MCP Server`);
+            this.register();
+        });
 
-socket.on("message", async (msg) => {
-    console.log(`[${AGENT_ID}] Received request:`, msg);
+        this.socket.on("message", async (msg) => {
+            console.log(`[${this.agentId}] Received request:`, msg);
+            if (msg.data.request === "get_weather") {
+                this.handleWeatherRequest(msg.from, msg.data.city);
+            }
+        });
 
-    if (msg.data.request === "get_weather") {
+        this.socket.on("disconnect", () => {
+            console.log(`[${this.agentId}] Disconnected`);
+        });
+    }
+
+    register() {
+        this.socket.emit("register", {
+            agentId: this.agentId,
+            capabilities: this.capabilities
+        });
+        console.log(`[${this.agentId}] Registered with capabilities: ` + JSON.stringify(this.capabilities));
+    }
+
+    async handleWeatherRequest(clientId, city) {
         try {
-            const { city } = msg.data;
-            const weatherData = await fetchWeatherWithCache(city);
-            sendResponse(msg.from, weatherData);
+            const weatherData = await this.fetchWeatherWithCache(city);
+            this.sendResponse(clientId, weatherData);
         } catch (err) {
-            sendResponse(msg.from, { error: "Failed to fetch weather", details: err.message });
+            this.sendResponse(clientId, { error: "Failed to fetch weather", details: err.message });
         }
     }
-});
 
-// Check Redis cache before calling the API
-async function fetchWeatherWithCache(city) {
-    const cacheKey = `weather:${city}`;
-    const cachedData = await redisClient.get(cacheKey);
-    if (cachedData) {
-        console.log(`[${AGENT_ID}] Returning cached data for ${city}`);
-        return JSON.parse(cachedData);
+    async fetchWeatherWithCache(city) {
+        const cacheKey = `weather:${city}`;
+        const cachedData = await this.redisClient.get(cacheKey);
+        if (cachedData) {
+            console.log(`[${this.agentId}] Returning cached data for ${city}`);
+            return JSON.parse(cachedData);
+        }
+
+        const weatherData = await this.fetchWeather(city);
+        await this.redisClient.setEx(cacheKey, 300, JSON.stringify(weatherData)); // Cache for 5 minutes
+        return weatherData;
     }
-    // No cache available; fetch fresh data
-    const weatherData = await fetchWeather(city);
-    // Cache the data for 5 minutes (300 seconds)
-    await redisClient.setEx(cacheKey, 300, JSON.stringify(weatherData));
-    return weatherData;
+
+    async fetchWeather(city) {
+        const url = `https://api.openweathermap.org/data/2.5/weather?q=${city}&appid=${this.weatherApiKey}&units=metric`;
+        const response = await axios.get(url);
+        return {
+            city: city,
+            temperature: response.data.main.temp,
+            description: response.data.weather[0].description,
+        };
+    }
+
+    sendResponse(clientId, data) {
+        this.socket.emit("message", {
+            from: this.agentId,
+            to: clientId,
+            data: data,
+        });
+        console.log(`[${this.agentId}] Sent weather data to ${clientId}:`, data);
+    }
 }
 
-async function fetchWeather(city) {
-    const url = `https://api.openweathermap.org/data/2.5/weather?q=${city}&appid=${WEATHER_API_KEY}&units=metric`;
-    const response = await axios.get(url);
-    return {
-        city: city,
-        temperature: response.data.main.temp,
-        description: response.data.weather[0].description,
-    };
-}
-
-function sendResponse(clientId, data) {
-    socket.emit("message", {
-        from: AGENT_ID,
-        to: clientId,
-        data: data,
-    });
-}
-
+// --- Start the agent ---
+const WEATHER_API_KEY = process.env.WEATHER_API_KEY;
+const agent = new WeatherAgent("weather_agent", "http://localhost:3000", WEATHER_API_KEY);
