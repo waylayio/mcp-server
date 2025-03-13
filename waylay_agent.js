@@ -63,7 +63,10 @@ class WaylayAgent {
         //console.log(`Received request: ${template} with variables:`, JSON.stringify(variables));
         const url = "https://api.waylay.io/rules/v1/tasks";
         const response = await axios.post(url, {
-            template, name: "agent test", variables, type: "onetime"
+            template, name: "agent test", variables, type: "onetime",
+            tags : {
+                AiTool : "AiTool"
+            },
         }, {
             auth: {
               username: this.apiKey,
