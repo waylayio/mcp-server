@@ -37,7 +37,7 @@ class MCPServer {
       // Agent registration
       socket.on("register", (data) => {
         this.agents.set(data.agentId, socket.id);
-        console.log(`Agent registered: ${data.agentId}` +  `Agent capabilities: ` + JSON.stringify(data.capabilities));
+        console.log(`Agent registered: ${data.agentId}` +  `, Agent capabilities: ` + JSON.stringify(data.capabilities));
       });
 
       // Handle incoming messages from agents or clients

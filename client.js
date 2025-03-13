@@ -14,6 +14,11 @@ socket.on("connect", () => {
         to: "weather_agent",
         data: { request: "get_weather", city: "Berlin" },
     });
+    socket.emit("message", {
+        from: CLIENT_ID,
+        to: "metrics_agent",
+        data: { request: "get_metrics", assetName: "HVAC1" },
+    });
 });
 
 // Listen for direct responses
