@@ -95,14 +95,12 @@ class WaylayAgent {
             const result = await this.executeGetTask(id);
             this.sendResponse(clientId, result.data.taskOutput);
         } catch (err) {
-            this.sendResponse(clientId, { error: `Failed to run the task ${id}`, details: err.message });
+            this.sendResponse(clientId, { error: `Failed to get the task ${id}`, details: err.message });
         }
     }
 
     async executeGetTask(id) {
-        const url = `https://api.waylay.io/rules/v1/tasks/cf94de3a-5fe3-4d32-a622-586e1efba1ca?format=bn`
-
-        //const url = `https://api.waylay.io/rules/v1/tasks/${id}?format=bn`;
+        const url = `https://api.waylay.io/rules/v1/tasks/${id}?format=bn`;
         const response = await axios.get(url, {
             auth: {
               username: this.apiKey,
