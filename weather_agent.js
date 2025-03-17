@@ -1,7 +1,8 @@
-const { io } = require("socket.io-client");
-const axios = require("axios");
-const { createClient } = require("redis");
-require("dotenv").config();
+import { io } from "socket.io-client";
+import { createClient } from 'redis'; 
+import axios from 'axios';
+import dotenv from 'dotenv';
+dotenv.config();
 
 class WeatherAgent {
     constructor(agentId, serverUrl, weatherApiKey) {

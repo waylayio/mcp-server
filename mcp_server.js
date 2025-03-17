@@ -1,8 +1,8 @@
 // mcp_server.js
-const express = require("express");
-const http = require("http");
-const { Server } = require("socket.io");
-const { createClient } = require("redis");
+import express from "express";
+import http from "http";
+import { Server } from "socket.io";
+import { createClient } from "redis";
 
 class MCPServer {
   constructor(port = 3000) {

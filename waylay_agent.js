@@ -1,6 +1,8 @@
-const { io } = require("socket.io-client");
-const axios = require("axios");
-require("dotenv").config();
+import { io } from "socket.io-client";
+import axios from 'axios';
+import dotenv from 'dotenv';
+dotenv.config();
+
 
 class WaylayAgent {
     constructor(agentId, serverUrl, apiKey, apiSecret) {
@@ -63,7 +65,7 @@ class WaylayAgent {
         //console.log(`Received request: ${template} with variables:`, JSON.stringify(variables));
         const url = "https://api.waylay.io/rules/v1/tasks";
         const response = await axios.post(url, {
-            template, name: "agent test", variables, type: "onetime",
+            template, name: "agent test:" + variables.resource, variables, type: "onetime",
             tags : {
                 AiTool : "AiTool"
             },

@@ -1,4 +1,4 @@
-const { io } = require("socket.io-client");
+import { io } from "socket.io-client";
 
 const MCP_SERVER_URL = "http://localhost:3000";
 const socket = io(MCP_SERVER_URL);
