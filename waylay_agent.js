@@ -19,6 +19,13 @@ class WaylayAgent {
                     template: { type: "string", required: true, description: "The name of template." },
                     variables: { type: "object", required: false, description: "Template variables." }
                 }
+            },
+            {
+                name: "getTaskResult",
+                description: "get Waylay Task Result.",
+                parameters: {
+                    id: { type: "string", required: true, description: "The task id." }
+                }
             }
         ];
         
@@ -36,6 +43,8 @@ class WaylayAgent {
             console.log(`[${this.agentId}] Received request:`, msg);
             if (msg.data.request === "runTemplate") {
                 this.handleTemplateRequest(msg.from, msg.data.template, msg.data.variables);
+            } else if (msg.data.request === "getTaskResult") {
+                this.handleGetTaskRequest(msg.from, msg.data.id);
             }
         });
 
@@ -70,6 +79,31 @@ class WaylayAgent {
                 AiTool : "AiTool"
             },
         }, {
+            auth: {
+              username: this.apiKey,
+              password: this.apiSecret
+            },
+            headers: {
+              'Content-Type': 'application/json',
+            },
+          });
+        return response;
+    }
+
+    async handleGetTaskRequest(clientId, id) {
+        try {
+            const result = await this.executeGetTask(id);
+            this.sendResponse(clientId, result.data.taskOutput);
+        } catch (err) {
+            this.sendResponse(clientId, { error: `Failed to run the task ${id}`, details: err.message });
+        }
+    }
+
+    async executeGetTask(id) {
+        const url = `https://api.waylay.io/rules/v1/tasks/cf94de3a-5fe3-4d32-a622-586e1efba1ca?format=bn`
+
+        //const url = `https://api.waylay.io/rules/v1/tasks/${id}?format=bn`;
+        const response = await axios.get(url, {
             auth: {
               username: this.apiKey,
               password: this.apiSecret

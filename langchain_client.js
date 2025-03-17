@@ -14,6 +14,10 @@ class LangChainClient {
             await this.flow.invoke();
         });
 
+        this.socket.on("message", (msg) => {
+            console.log(`[Agent] Received message:`, msg);
+        });
+
         this.socket.on("broadcast", (data) => {
             console.log(`[Client] Received broadcast via WebSocket:`, data);
         });
@@ -22,7 +26,8 @@ class LangChainClient {
             async () => {
                 return { weather: await this.requestWeather(), metrics: await this.requestMetrics() };
             },
-            this.processData.bind(this)
+            this.processData.bind(this),
+            this.handleProcessDataResponse.bind(this)
         ]);
     }
 
@@ -54,20 +59,43 @@ class LangChainClient {
 
     async processData({ weather, metrics }) {
         console.log(`[Client] Requesting to processData...`);
-        this.socket.emit("message", {
-            from: this.CLIENT_ID,
-            to: "waylay_agent",
-            data: {
-                request: "runTemplate",
-                template: "HVAC_filter_check_V2",
-                variables: {
-                    currentTemperature: metrics.temperature.value,
-                    airflow: metrics.airflow.value,
-                    energyUsage: metrics.energy.value,
-                    resource: metrics.asset
-                }
-            },
+
+        return new Promise((resolve) => {
+            this.socket.emit("message", {
+                from: this.CLIENT_ID,
+                to: "waylay_agent",
+                data: {
+                    request: "runTemplate",
+                    template: "HVAC_filter_check_V2",
+                    variables: {
+                        currentTemperature: metrics.temperature.value,
+                        airflow: metrics.airflow.value,
+                        energyUsage: metrics.energy.value,
+                        resource: metrics.asset,
+                        outsideTemperature: weather.temperature,
+                        city: weather.city
+                    }
+                },
+            });
+            this.socket.once("message", (msg) => {
+                if (msg.from === "waylay_agent") resolve(msg.data);
+            });
         });
+    }
+
+    async handleProcessDataResponse(result) {
+        console.log(`[Client] Processed to handle final response:`, result);
+        if(result.ID) {
+            this.socket.emit("message", {
+                from: this.CLIENT_ID,
+                to: "waylay_agent",
+                data: {
+                    request: "getTaskResult",
+                    id: result.ID
+                },
+            })
+        }
+        return result;
     }
 
     async listenForUpdates() {
