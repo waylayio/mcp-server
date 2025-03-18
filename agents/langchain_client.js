@@ -3,7 +3,7 @@ import { RunnableSequence } from "@langchain/core/runnables";
 
 const MCP_SERVER_URL = "http://localhost:3000";
 const CLIENT_ID = "client_langchain";
-const TIMEOUT_DURATION = 5000; // 5 seconds timeout
+const TIMEOUT_DURATION = 10000; 
 const TEMP_THRESHOLD = 0
 
 class LangChainClient {
