@@ -41,9 +41,9 @@ class WaylayAgent {
 
         this.socket.on("message", async (msg) => {
             console.log(`[${this.agentId}] Received request:`, msg);
-            if (msg.data.request === "runTemplate") {
+            if (msg.data?.request === "runTemplate") {
                 this.handleTemplateRequest(msg.from, msg.data.template, msg.data.variables);
-            } else if (msg.data.request === "getTaskResult") {
+            } else if (msg.data?.request === "getTaskResult") {
                 this.handleGetTaskRequest(msg.from, msg.data.id);
             }
         });

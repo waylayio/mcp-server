@@ -1,4 +1,3 @@
-// mcp_server.js
 import express from "express";
 import http from "http";
 import { Server } from "socket.io";
@@ -11,8 +10,10 @@ class MCPServer {
     this.app.use(express.json());
     this.server = http.createServer(this.app);
     this.io = new Server(this.server, { cors: { origin: "*" } });
-    this.agents = new Map();  // { agentId: socketId }
-    this.clients = new Map(); // { clientId: response object }
+    // Stores agents as: { agentId: { socketId, capabilities } }
+    this.agents = new Map();
+    // SSE clients stored as: { clientId: response object }
+    this.clients = new Map();
 
     // Create Redis clients for publishing and subscribing
     this.redisPub = createClient();
@@ -24,9 +25,9 @@ class MCPServer {
     await this.redisPub.connect();
     await this.redisSub.connect();
 
-    // Initialize all the modules
+    // Initialize all modules
     this.initWebSocket();
-    this.initRedisSubscription();
+    await this.initRedisSubscription();
     this.initEndpoints();
   }
 
@@ -34,25 +35,26 @@ class MCPServer {
     this.io.on("connection", (socket) => {
       console.log(`WebSocket connected: ${socket.id}`);
 
-      // Agent registration
+      // Agent registration: now stores capabilities as well
       socket.on("register", (data) => {
-        this.agents.set(data.agentId, socket.id);
-        console.log(`Agent registered: ${data.agentId}` +  `, Agent capabilities: ` + JSON.stringify(data.capabilities));
+        this.agents.set(data.agentId, { socketId: socket.id, capabilities: data.capabilities });
+        console.log(`Agent registered: ${data.agentId}, Capabilities: ${JSON.stringify(data.capabilities)}`);
       });
 
       // Handle incoming messages from agents or clients
       socket.on("message", async (msg) => {
         console.log(`Received message: ${JSON.stringify(msg)}`);
-        // Publish the message to Redis for routing
+        // Publish message to Redis for routing
         await this.redisPub.publish("agent_messages", JSON.stringify(msg));
       });
 
       socket.on("disconnect", () => {
         console.log(`WebSocket disconnected: ${socket.id}`);
         // Remove agent by matching socket id
-        for (const [agentId, socketId] of this.agents.entries()) {
-          if (socketId === socket.id) {
+        for (const [agentId, entry] of this.agents.entries()) {
+          if (entry.socketId === socket.id) {
             this.agents.delete(agentId);
+            console.log(`Agent removed: ${agentId}`);
             break;
           }
         }
@@ -60,15 +62,21 @@ class MCPServer {
     });
   }
 
-  initRedisSubscription() {
-    // Subscribe to Redis channel for messages
-    this.redisSub.subscribe("agent_messages", (message) => {
+  async initRedisSubscription() {
+    // Subscribe using the new Node-Redis v4 API; the callback is invoked on every message.
+    await this.redisSub.subscribe("agent_messages", (message) => {
       const msg = JSON.parse(message);
-      const targetSocketId = this.agents.get(msg.to);
-      if (targetSocketId) {
-        this.io.to(targetSocketId).emit("message", msg);
+      // If the message has a "to" field, treat it as point-to-point.
+      if (msg.to) {
+        const target = this.agents.get(msg.to);
+        if (target) {
+          this.io.to(target.socketId).emit("message", msg);
+        } else {
+          console.log(`Agent ${msg.to} not found for point-to-point message.`);
+        }
       } else {
-        console.log(`Agent ${msg.to} not found`);
+        // Otherwise, broadcast the message to all connected agents.
+        this.io.emit("message", msg);
       }
     });
   }
@@ -93,13 +101,12 @@ class MCPServer {
 
     // Discovery Endpoint: List available agents and their capabilities
     this.app.get("/agents", (req, res) => {
-        const activeAgents = Array.from(this.agents.entries()).map(([agentId, info]) => ({
-            agentId,
-            capabilities: info.capabilities
-        }));
-        res.json({ activeAgents });
+      const activeAgents = Array.from(this.agents.entries()).map(([agentId, info]) => ({
+        agentId,
+        capabilities: info.capabilities
+      }));
+      res.json({ activeAgents });
     });
-      
 
     // --- Broadcast Endpoint ---
     this.app.post("/broadcast", (req, res) => {

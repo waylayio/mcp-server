@@ -37,7 +37,7 @@ class MetricsAgent {
 
         this.socket.on("message", async (msg) => {
             console.log(`[${this.agentId}] Received request:`, msg);
-            if (msg.data.request === "get_metrics") {
+            if (msg.data?.request === "get_metrics") {
                 this.handleMetricsRequest(msg.from, msg.data.assetName);
             }
         });
