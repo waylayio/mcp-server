@@ -3,16 +3,23 @@ import { RunnableSequence } from "@langchain/core/runnables";
 
 const MCP_SERVER_URL = "http://localhost:3000";
 const CLIENT_ID = "client_langchain";
-const TIMEOUT_DURATION = 10000; 
+const TIMEOUT_DURATION = 20000; 
 const TEMP_THRESHOLD = 0
 
 class LangChainClient {
     constructor() {
         this.socket = io(MCP_SERVER_URL);
         this.CLIENT_ID = CLIENT_ID;
+        this.capabilities = [
+            {
+                name: "Execute LangChain flow",
+                description: "starts Waylay Template."
+            }
+        ];
         this.socket.on("connect", async () => {
             console.log(`[Client] Connected as ${this.CLIENT_ID}`);
-            this.socket.emit("register", { agentId: this.CLIENT_ID });
+            this.socket.emit("register", { agentId: this.CLIENT_ID ,
+                capabilities: this.capabilities});
             await this.flow.invoke();
         });
 
@@ -39,8 +46,12 @@ class LangChainClient {
                 return this.processData(data);
             },
             async (result) => {
-                if (!result) return null; // Prevent calling handleProcessDataResponse on null
+                if (!result) return null;
+                await new Promise(resolve => setTimeout(resolve, 1000));
                 return this.handleProcessDataResponse(result);
+            }, async (data) => {
+                if (!data || data.isTheAlarmTriggered !== 'TRUE') return null;
+                return this.createWorkOrder(data);
             }
         ]);
     }
@@ -102,14 +113,24 @@ class LangChainClient {
 
     async handleProcessDataResponse(result) {
         if (!result) return;
-        console.log(`[Client] Processed to handle final response:`, result);
-        if (result.ID) {
-            this.socket.emit("message", {
-                from: this.CLIENT_ID,
-                to: "waylay_agent",
-                data: { request: "getTaskResult", id: result.ID }
-            });
-        }
+        console.log(`[Client] Processed to handle response:`, result);
+
+        return this.requestWithTimeout("message", {
+            from: this.CLIENT_ID,
+            to: "waylay_agent",
+            data: {
+                request: "getTaskResult",
+                id: result.ID
+            }
+        }, "waylay_agent");
+    }
+
+    async createWorkOrder(data) {
+        return this.requestWithTimeout("message", {
+            from: this.CLIENT_ID,
+            to: "waylay_work_order_agent",
+            data: { request: "askAgent", question: `create me a work order for HVAC1, description is ${data.description}, make it open case and assign it to veselin@waylay.io`}
+        }, "waylay_work_order_agent");
     }
 }
 

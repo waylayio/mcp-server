@@ -23,7 +23,22 @@ class MetricsAgent {
                     airflow: { type: "number", description: "The simulated airflow in m³/s." },
                     energy: { type: "number", description: "The simulated energy consumption in kWh." }
                 }
-            }
+            },
+                {
+                    name: "get_thermostat_data",
+                    description: "Fetches all simulated metrics for a given thermostat.",
+                    parameters: {
+                        assetName: {
+                            type: "string",
+                            required: true,
+                            description: "The name of the thermostat to retrieve metrics for."
+                        }
+                    },
+                    returns: {
+                        temperature: { type: "number", description: "The simulated temperature in Celsius." },
+                        humidity: { type: "number", description: "Humidity in %" }
+                    }
+                }
         ];
 
         this.init();
@@ -39,6 +54,8 @@ class MetricsAgent {
             console.log(`[${this.agentId}] Received request:`, msg);
             if (msg.data?.request === "get_metrics") {
                 this.handleMetricsRequest(msg.from, msg.data.assetName);
+            } else if (msg.data?.request === "get_thermostat_data") {
+                this.handleThermostatRequest(msg.from, msg.data.assetName);
             }
         });
 
@@ -68,12 +85,25 @@ class MetricsAgent {
     generateMockMetrics(assetName) {
         return {
             asset: assetName,
-            temperature: { value: this.randomFloat(18, 30), unit: "°C" },
+            temperature: { value: this.randomFloat(20, 40), unit: "°C" },
             air_pressure: { value: this.randomFloat(950, 1050), unit: "hPa" },
-            airflow: { value: this.randomFloat(0, 10), unit: "m³/s" },
+            airflow: { value: this.randomFloat(5, 10), unit: "m³/s" },
             energy: { value: this.randomFloat(50, 500), unit: "kWh" }
         };
     }
+
+    handleThermostatRequest(clientId, assetName) {
+        if (!assetName) {
+            this.sendResponse(clientId, { error: "Missing assetName parameter" });
+            return;
+        }
+        this.sendResponse(clientId, {
+            asset: assetName,
+            temperature: { value: this.randomFloat(15, 30), unit: "°C" },
+            humidity: { value: this.randomFloat(30, 80), unit: "%" },
+        });
+    }
+
 
     sendResponse(clientId, data) {
         this.socket.emit("message", {
