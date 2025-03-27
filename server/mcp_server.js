@@ -75,8 +75,13 @@ class MCPServer {
           console.log(`Agent ${msg.to} not found for point-to-point message.`);
         }
       } else {
-        // Otherwise, broadcast the message to all connected agents.
-        this.io.emit("message", msg);
+        // Otherwise, broadcast the message to all the agent that has in the name UX for testing.
+        const UX =  this.agents.get("UX");
+        if (UX) {
+          this.io.to(UX.socketId).emit("message", msg);
+        } else {
+          this.io.emit("message", msg);
+        }
       }
     });
   }

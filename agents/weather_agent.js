@@ -1,5 +1,5 @@
 import { io } from "socket.io-client";
-import { createClient } from 'redis'; 
+import { createClient } from 'redis';
 import axios from 'axios';
 import dotenv from 'dotenv';
 dotenv.config();
@@ -85,6 +85,7 @@ class WeatherAgent {
         return {
             city: city,
             temperature: response.data.main.temp,
+            humidity: response.data.main.humidity,
             description: response.data.weather[0].description,
         };
     }

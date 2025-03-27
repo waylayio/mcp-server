@@ -20,12 +20,12 @@ class WaylayAssistantAgent {
                 }
             }
         ];
-        
+
         this.init();
     }
 
     async init() {
-    
+
         this.socket.on("connect", () => {
             console.log(`[${this.agentId}] Connected to MCP Server`);
             this.register();
@@ -67,9 +67,9 @@ class WaylayAssistantAgent {
         }, {
             headers: {
                 'Authorization': `hmac-sha256 ${this.apiSecret}`,
-                'Content-Type': 'application/json', 
-              },
-          });
+                'Content-Type': 'application/json',
+            },
+        });
         return response;
     }
 

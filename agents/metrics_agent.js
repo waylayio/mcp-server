@@ -24,21 +24,21 @@ class MetricsAgent {
                     energy: { type: "number", description: "The simulated energy consumption in kWh." }
                 }
             },
-                {
-                    name: "get_thermostat_data",
-                    description: "Fetches all simulated metrics for a given thermostat.",
-                    parameters: {
-                        assetName: {
-                            type: "string",
-                            required: true,
-                            description: "The name of the thermostat to retrieve metrics for."
-                        }
-                    },
-                    returns: {
-                        temperature: { type: "number", description: "The simulated temperature in Celsius." },
-                        humidity: { type: "number", description: "Humidity in %" }
+            {
+                name: "get_thermostat_data",
+                description: "Fetches all simulated metrics for a given thermostat.",
+                parameters: {
+                    assetName: {
+                        type: "string",
+                        required: true,
+                        description: "The name of the thermostat to retrieve metrics for."
                     }
+                },
+                returns: {
+                    temperature: { type: "number", description: "The simulated temperature in Celsius." },
+                    humidity: { type: "number", description: "Humidity in %" }
                 }
+            }
         ];
 
         this.init();
@@ -85,9 +85,9 @@ class MetricsAgent {
     generateMockMetrics(assetName) {
         return {
             asset: assetName,
-            temperature: { value: this.randomFloat(20, 40), unit: "°C" },
+            temperature: { value: this.randomFloat(90, 100), unit: "°C" },
             air_pressure: { value: this.randomFloat(950, 1050), unit: "hPa" },
-            airflow: { value: this.randomFloat(5, 10), unit: "m³/s" },
+            airflow: { value: this.randomFloat(500, 10000), unit: "m³/s" },
             energy: { value: this.randomFloat(50, 500), unit: "kWh" }
         };
     }

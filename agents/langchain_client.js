@@ -3,7 +3,7 @@ import { RunnableSequence } from "@langchain/core/runnables";
 
 const MCP_SERVER_URL = "http://localhost:3000";
 const CLIENT_ID = "client_langchain";
-const TIMEOUT_DURATION = 20000; 
+const TIMEOUT_DURATION = 20000;
 const TEMP_THRESHOLD = 0
 
 class LangChainClient {
@@ -18,9 +18,11 @@ class LangChainClient {
         ];
         this.socket.on("connect", async () => {
             console.log(`[Client] Connected as ${this.CLIENT_ID}`);
-            this.socket.emit("register", { agentId: this.CLIENT_ID ,
-                capabilities: this.capabilities});
-            await this.flow.invoke();
+            this.socket.emit("register", {
+                agentId: this.CLIENT_ID,
+                capabilities: this.capabilities
+            });
+            //await this.flow.invoke();
         });
 
         this.socket.on("message", (msg) => {
@@ -30,31 +32,31 @@ class LangChainClient {
         this.socket.on("broadcast", (data) => {
             console.log(`[Client] Received broadcast via WebSocket:`, data);
         });
-
-        this.flow = RunnableSequence.from([
-            async () => {
-                const weather = await this.requestWeather();
-                if (!weather || weather.temperature <= TEMP_THRESHOLD) {
-                    console.log(`[Client] Temperature is below threshold ${TEMP_THRESHOLD}. Exiting flow.`);
-                    return null; // Exit early
-                }
-                const metrics = await this.requestMetrics();
-                return metrics ? { weather, metrics } : null;
-            },
-            async (data) => {
-                if (!data) return null; // Prevent calling processData on null
-                return this.processData(data);
-            },
-            async (result) => {
-                if (!result) return null;
-                await new Promise(resolve => setTimeout(resolve, 1000));
-                return this.handleProcessDataResponse(result);
-            }, async (data) => {
-                if (!data || data.isTheAlarmTriggered !== 'TRUE') return null;
-                return this.createWorkOrder(data);
-            }
-        ]);
     }
+
+    flow = RunnableSequence.from([
+        async () => {
+            const weather = await this.requestWeather();
+            if (!weather || weather.temperature <= TEMP_THRESHOLD) {
+                console.log(`[Client] Temperature is below threshold ${TEMP_THRESHOLD}. Exiting flow.`);
+                return null; // Exit early
+            }
+            const metrics = await this.requestMetrics();
+            return metrics ? { weather, metrics } : null;
+        },
+        async (data) => {
+            if (!data) return null; // Prevent calling processData on null
+            return this.processData(data);
+        },
+        async (result) => {
+            if (!result) return null;
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            return this.handleProcessDataResponse(result);
+        }, async (data) => {
+            if (!data || data.isTheAlarmTriggered !== 'TRUE') return null;
+            return this.createWorkOrder(data);
+        }
+    ]);
 
     async requestWithTimeout(event, requestData, expectedFrom) {
         return new Promise((resolve, reject) => {
@@ -129,9 +131,16 @@ class LangChainClient {
         return this.requestWithTimeout("message", {
             from: this.CLIENT_ID,
             to: "waylay_work_order_agent",
-            data: { request: "askAgent", question: `create me a work order for HVAC1, description is ${data.description}, make it open case and assign it to veselin@waylay.io`}
+            data: { request: "askAgent", question: `create me a work order for HVAC1, description is ${data.description}, make it open case and assign it to veselin@waylay.io` }
         }, "waylay_work_order_agent");
     }
 }
 
 const client = new LangChainClient();
+setInterval(async () => {
+    try {
+        await client.flow.invoke();
+    } catch (error) {
+        console.error("Error in flow execution:", error);
+    }
+}, 10000);
