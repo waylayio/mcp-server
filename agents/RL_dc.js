@@ -41,11 +41,11 @@ const ACTIONS = {
 };
 
 const ACTION_EFFECTS = {
-  [ACTIONS.COOL_INCREMENT_SMALL]: { temp: -0.5, fan: 5, energy: 3 },
-  [ACTIONS.COOL_DECREMENT_SMALL]: { temp: 0.5, fan: -5, energy: -3 },
+  [ACTIONS.COOL_INCREMENT_SMALL]: { temp: -0.2, fan: 5, energy: 2 },
+  [ACTIONS.COOL_DECREMENT_SMALL]: { temp: 0.2, fan: -5, energy: -2 },
   [ACTIONS.FAN_INCREMENT_SMALL]: { temp: -0.1, fan: 10, energy: 3 },
-  [ACTIONS.COOL_INCREMENT_LARGE]: { temp: -1.0, fan: 10, energy: 10 },
-  [ACTIONS.COOL_DECREMENT_LARGE]: { temp: 1.0, fan: -10, energy: -10 },
+  [ACTIONS.COOL_INCREMENT_LARGE]: { temp: -0.5, fan: 10, energy: 6 },
+  [ACTIONS.COOL_DECREMENT_LARGE]: { temp: 0.5, fan: -10, energy: -6 },
   [ACTIONS.FAN_INCREMENT_LARGE]: { temp: -0.2, fan: 20, energy: 5 },
   [ACTIONS.MAINTAIN]: { temp: 0, fan: 0, energy: 0 },
   [ACTIONS.THERMAL_STORAGE_CHARGE]: { temp: 0.5, fan: 0, energy: 5 },
@@ -82,7 +82,7 @@ class EnhancedDataCenterEnvironment {
     this.workload = new Sensor(0.5, 0, 1, 0.1, 'Workload');
     this.ambientTemperature = new Sensor(25, 15, 30, 1, 'Ambient Temp');
     this.humidity = new Sensor(50, 10, 90, 5, 'Humidity');
-    this.targetTemperature = new Sensor(22, 20, 25, 0, 'Target Temp');
+    this.targetTemperature = new Sensor(22, 18, 28, 0, 'Target Temp');
     this.fanSpeed = new Sensor(30, 0, 100, 5, 'Fan Speed');
     this.airflow = new Sensor(300, 100, 500, 20, 'Airflow');
 
@@ -182,7 +182,7 @@ class EnhancedDataCenterEnvironment {
       this.workload.getNormalized(),
       (this.ambientTemperature.get() - 15) / 15, // 15-30°C range
       (this.humidity.get() - 10) / 80, // 10-90% range
-      (this.targetTemperature.get() - 20) / 5, // 20-25°C range
+      (this.targetTemperature.get() - 18) / 10, // 18-28°C range
       this.fanSpeed.getNormalized(),
       (this.airflow.get() - 100) / 400, // 100-500 range
       (this.pue.get() - 1.0) / 2.0 // 1.0-3.0 range
@@ -205,6 +205,12 @@ class EnhancedDataCenterEnvironment {
   executeAction(action) {
     const effect = ACTION_EFFECTS[action];
 
+    if (![ACTIONS.THERMAL_STORAGE_CHARGE, ACTIONS.THERMAL_STORAGE_DISCHARGE].includes(action)) {
+      this.targetTemperature.value = Math.max(18, Math.min(28, 
+        this.targetTemperature.value + (effect.temp * 0.3)
+      ));
+    }
+
     // Handle special actions (thermal storage)
     if (action === ACTIONS.THERMAL_STORAGE_CHARGE) {
       const chargeAmount = Math.min(
@@ -224,7 +230,6 @@ class EnhancedDataCenterEnvironment {
     }
     else {
       // Handle regular cooling/fan actions
-      this.targetTemperature.value += effect.temp * 0.5;
       this.fanSpeed.value = Math.min(100, Math.max(0, this.fanSpeed.value + effect.fan));
       this.energy.value = Math.max(0, this.energy.value + effect.energy);
     }
@@ -325,8 +330,9 @@ class EnhancedDQNAgent {
       FAN_SPEED: 5,
       AIRFLOW: 6,
       PUE: 7,
-      RACK_TEMPS: 8, // Starting index for rack temps
-      STORAGE: 9 + config.environment.rackCount
+      RACK_TEMPS: 8,
+      STORAGE_LEVEL: 8 + config.environment.rackCount, // 18
+      STORAGE_EFFICIENCY: 9 + config.environment.rackCount // 19
     };
 
 
@@ -405,7 +411,7 @@ class EnhancedDQNAgent {
   }
 
   sanitizeState(state) {
-    const expectedLength = this.stateIndices.STORAGE + 1;
+    const expectedLength = 20;
 
     // Handle invalid state objects
     if (!Array.isArray(state)) {
@@ -461,12 +467,25 @@ class EnhancedDQNAgent {
   }
 
   calculateReward(oldState, newState, action) {
-
+    // Weather and energy price adjustments
     this.weatherAdjustment = Math.min(5, Math.max(-5,
       (this.env.currentWeather.temperature - this.env.ambientTemperature.value) * 0.1
     ));
     this.currentEnergyPrice = this.env.currentEnergyPrices.current;
     const cleanNewState = this.sanitizeState(newState);
+
+    // Action magnitude mapping
+    const ACTION_MAGNITUDE = {
+      [ACTIONS.COOL_INCREMENT_SMALL]: 0.5,
+      [ACTIONS.COOL_DECREMENT_SMALL]: 0.5,
+      [ACTIONS.FAN_INCREMENT_SMALL]: 0.5,
+      [ACTIONS.COOL_INCREMENT_LARGE]: 1.0,
+      [ACTIONS.COOL_DECREMENT_LARGE]: 1.0,
+      [ACTIONS.FAN_INCREMENT_LARGE]: 1.0,
+      [ACTIONS.MAINTAIN]: 0.1,
+      [ACTIONS.THERMAL_STORAGE_CHARGE]: 0.8,
+      [ACTIONS.THERMAL_STORAGE_DISCHARGE]: 0.8
+    };
 
     // Extract normalized values
     const {
@@ -475,7 +494,7 @@ class EnhancedDQNAgent {
       [this.stateIndices.TARGET_TEMP]: targetTempNorm,
       [this.stateIndices.FAN_SPEED]: fanSpeedNorm,
       [this.stateIndices.PUE]: pueNorm,
-      [this.stateIndices.STORAGE]: storageNorm,
+      [this.stateIndices.STORAGE_LEVEL]: storageNorm,
       [this.stateIndices.WORKLOAD]: workloadNorm
     } = cleanNewState;
 
@@ -493,14 +512,18 @@ class EnhancedDQNAgent {
 
     // Reward components
     const components = {
-      // Energy cost (price-sensitive)
-      energyCost: -Math.min(2, energyNorm * 2 * energyPriceFactor),
 
-      // Temperature control (more important when workload is high)
-      temperatureControl: -Math.min(1, Math.abs(ambientTempNorm - targetTempNorm)) * (1 + workloadNorm),
+      // Energy cost (non-linear, price-sensitive)
+      energyCost: -Math.min(3, Math.pow(energyNorm * energyPriceFactor, 1.5)),
 
-      // Rack safety (non-linear penalty)
-      rackSafety: -Math.min(2, Math.pow(Math.max(0, maxRackTempNorm - 0.5), 2)),
+      // Temperature control (ambient + rack temps, workload-sensitive)
+      temperatureControl: -Math.min(1, 
+        (Math.abs(ambientTempNorm - targetTempNorm) * 0.7 + 
+        Math.abs(maxRackTempNorm - 0.5) * 0.3
+      ) * (1 + workloadNorm)),
+
+      // Rack safety (cubic penalty for hot racks)
+      rackSafety: -Math.min(3, Math.pow(Math.max(0, maxRackTempNorm - 0.55), 3)),
 
       // Temperature uniformity
       tempUniformity: -Math.min(1, rackTempGradient * 3),
@@ -508,46 +531,60 @@ class EnhancedDQNAgent {
       // PUE efficiency
       pueEfficiency: -Math.min(1, Math.abs(pueNorm - 0.25)),
 
-      // Fan wear (non-linear)
-      fanWear: -Math.min(1, Math.pow(fanSpeedNorm, 3)),
+      // Fan wear (cubic penalty)
+      fanWear: -Math.min(1.5, Math.pow(fanSpeedNorm, 3)),
 
-      // Storage value (with bonus for smart usage)
-      storageValue: storageNorm > 0.5 ? 0.1 : -0.1,
+      // Smart storage valuation
+      storageValue: (storageNorm > 0.8 && energyPriceFactor > 1.5) ? 0.2 :
+                   (storageNorm < 0.2 && maxRackTempNorm > 0.5) ? -0.2 : 0,
 
       // Workload balance
       workloadBalance: -Math.min(1, Math.abs(workloadNorm - 0.5)),
 
-      // Failure risk (sigmoid penalty)
-      failurePenalty: -1 / (1 + Math.exp(-10 * (this.env.failureRisk - 0.7))),
+      // Failure risk (quadratic penalty)
+      failurePenalty: -Math.min(5, Math.pow(Math.max(0, this.env.failureRisk - 0.6), 2)) * 3,
 
-      // Small penalty for any action
-      actionPenalty: -0.03
+      // Action penalty (magnitude-sensitive)
+      actionPenalty: -0.02 * (ACTION_MAGNITUDE[action] || 1)
     };
 
     // Action-specific bonuses
     if (action === ACTIONS.THERMAL_STORAGE_DISCHARGE && maxRackTempNorm > 0.7) {
-      components.storageBonus = 0.5;
+      components.storageBonus = 0.5 * (1 - storageNorm); // Bigger bonus when storage was full
+    }
+    else if (action === ACTIONS.THERMAL_STORAGE_CHARGE && energyPriceFactor < 1.2) {
+      components.storageBonus = 0.3 * storageNorm; // Reward charging more when storage is low
     }
 
     // Dynamic weights
     const weights = {
       energyCost: 1.0,
       temperatureControl: maxRackTempNorm > 0.67 ? 3.0 : 1.5,
-      rackSafety: maxRackTempNorm > 0.7 ? 3.0 : 1.0,
+      rackSafety: maxRackTempNorm > 0.7 ? 4.0 : 2.0,
       tempUniformity: 0.8,
       pueEfficiency: 0.7,
       fanWear: 0.5,
-      storageValue: 0.5,
+      storageValue: 0.7,
       workloadBalance: 0.5,
-      failurePenalty: 3.0,
-      actionPenalty: 1.0
+      failurePenalty: 3.5,
+      actionPenalty: 1.0,
+      storageBonus: 1.0
     };
 
     // Calculate total reward
-    return Object.entries(components).reduce((total, [key, value]) => {
+    const totalReward = Object.entries(components).reduce((total, [key, value]) => {
       return total + (value * (weights[key] || 1));
     }, 0);
-  }
+
+    // Debug logging
+    console.log(`[Step ${this.stepCount}] Reward breakdown:`);
+      Object.entries(components).forEach(([key, value]) => {
+        console.log(`  ${key.padEnd(16)}: ${value.toFixed(3)} x ${weights[key]} = ${(value * weights[key]).toFixed(3)}`);
+      });
+      console.log(`  TOTAL REWARD: ${totalReward.toFixed(3)}`);
+
+    return totalReward;
+}
 
   async act(state) {
     if (!this.model || !Array.isArray(state)) {
@@ -597,7 +634,6 @@ class EnhancedDQNAgent {
     if (this.isTraining || this.memoryBuffer.length < this.batchSize) {
       return null;
     }
-    console.log('training ...')
 
     this.isTraining = true;
     let lossValue = null;
@@ -666,7 +702,6 @@ class EnhancedDQNAgent {
       if (++this.stepCount % config.training.targetUpdateFreq === 0) {
         await this.updateTargetModel();
       }
-      console.log('training done');
     } catch (error) {
       console.error('Training error:', error);
       await this.resetBackend();
@@ -801,8 +836,6 @@ class EnhancedSimulation {
       // Record and log
       const status = this.env.emitStatusUpdate(action);
       //console.log("status", status.data)
-
-      
       
     } catch (error) {
       console.error('Simulation step error:', error);
