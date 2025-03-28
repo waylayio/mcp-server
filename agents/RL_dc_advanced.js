@@ -5,20 +5,6 @@ import path from 'path';
 
 // Configuration with additional parameters
 const config = {
-  training: {
-    gamma: 0.95,
-    epsilon: 1.0,
-    epsilonMin: 0.01,
-    epsilonDecay: 0.995,
-    learningRate: 0.001,
-    batchSize: 32,
-    memoryCapacity: 10000,
-    targetUpdateFreq: 200,
-    saveModelFreq: 1000,
-    validationSplit: 0.2,
-    gradClipValue: 1.0,
-    nStepReturns: 3
-  },
   environment: {
     updateInterval: 60000,
     updateExternalInterval: 30000,
@@ -32,6 +18,18 @@ const config = {
     noiseScale: 0.1           // Noise scale factor
   },
   training: {
+    gamma: 0.95,
+    epsilon: 1.0,
+    epsilonMin: 0.01,
+    epsilonDecay: 0.995,
+    learningRate: 0.001,
+    batchSize: 32,
+    memoryCapacity: 10000,
+    targetUpdateFreq: 200,
+    saveModelFreq: 1000,
+    validationSplit: 0.2,
+    gradClipValue: 1.0,
+    nStepReturns: 3,
     learningRate: 0.001       // Required for optimizer
   }
 };
