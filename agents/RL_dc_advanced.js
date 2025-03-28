@@ -609,7 +609,20 @@ class EnhancedDataCenterEnvironment {
     }
 
     executeAction(action) {
+        if (this.failureRisk > 0.9) {
+            action = this.getEmergencyAction();
+          }
+        
         const effect = ACTION_EFFECTS[action];
+
+        const currentFanSpeed = this.fanSpeed.get();
+    
+        // Skip fan-increasing actions if already at max
+        if ((action === ACTIONS.FAN_INCREMENT_SMALL || 
+            action === ACTIONS.FAN_INCREMENT_LARGE) &&
+            currentFanSpeed >= 100) {
+        return this.emitStatusUpdate(action); // No change
+        }
 
         if (![ACTIONS.THERMAL_STORAGE_CHARGE, ACTIONS.THERMAL_STORAGE_DISCHARGE].includes(action)) {
             this.targetTemperature.value = Math.max(18, Math.min(28,
@@ -785,6 +798,34 @@ class EnhancedDQNAgent {
         this.updateTargetModel();
     }
 
+    getEmergencyAction() {
+        const maxRackTemp = Math.max(...this.rackTemperatures.map(r => r.get()));
+        const currentFanSpeed = this.fanSpeed.get();
+
+        // Priority 1: Cool hottest racks (if fans aren't maxed)
+        if (maxRackTemp > 28 && currentFanSpeed < 100) {
+            return ACTIONS.COOL_INCREMENT_LARGE;
+        }
+
+        // Priority 2: Discharge thermal storage if available
+        if (this.thermalStorage.current > this.thermalStorage.dischargeRate &&
+            maxRackTemp > 26) {
+            return ACTIONS.THERMAL_STORAGE_DISCHARGE;
+        }
+
+        // Priority 3: Max fans (only if not already at max)
+        if (currentFanSpeed < 95) {
+            return ACTIONS.FAN_INCREMENT_LARGE;
+        }
+
+        // Last resort - try cooling if possible
+        if (currentFanSpeed >= 100 && maxRackTemp > 27) {
+            return ACTIONS.COOL_INCREMENT_LARGE;
+        }
+
+        return ACTIONS.MAINTAIN;
+    }
+
     isValidAction(action, currentState) {
         const storageLevel = currentState[this.stateIndices.STORAGE_LEVEL] *
             this.env.thermalStorage.capacity;
@@ -797,8 +838,13 @@ class EnhancedDQNAgent {
             const availableCapacity = this.env.thermalStorage.capacity - storageLevel;
             return availableCapacity >= this.env.thermalStorage.chargeRate;
         }
-
-        return true; // All non-storage actions are valid
+        const currentFanSpeed = this.env.fanSpeed.get();
+        if ((action === ACTIONS.FAN_INCREMENT_SMALL ||
+            action === ACTIONS.FAN_INCREMENT_LARGE) &&
+            currentFanSpeed >= 100) {
+            return false;
+        }
+        return true;
     }
 
     async updateTargetModel() {
@@ -994,18 +1040,18 @@ class EnhancedDQNAgent {
             storageBonus: 0
         };
 
-        const failurePenalty = -Math.min(5, 
-            Math.pow(this.env.failureRisk, 3) * 5 * 
+        const failurePenalty = -Math.min(5,
+            Math.pow(this.env.failureRisk, 3) * 5 *
             (1 + (this.env.consecutiveDangerSteps / 10))
-            );
-    
+        );
+
         // Add to components
         components.failurePenalty = failurePenalty;
-    
+
         // Increase penalty for actions that worsen failure risk
-        if (this.env.failureRisk > 0.6 && 
+        if (this.env.failureRisk > 0.6 &&
             this.env.failureRisk > this.prevFailureRisk) {
-        components.riskIncreasePenalty = -2 * (this.env.failureRisk - this.prevFailureRisk);
+            components.riskIncreasePenalty = -2 * (this.env.failureRisk - this.prevFailureRisk);
         }
         this.prevFailureRisk = this.env.failureRisk;
 

@@ -17,10 +17,12 @@ const ACTIONS = {
 
 const SOCKET_URL = process.env.REACT_APP_SOCKET_URL || "http://localhost:3000";
 const MAX_DATA_POINTS = 100;
-
-const socket = io(SOCKET_URL);
+const DATA_RETENTION_MS = 15 * 60 * 1000; // 15 minutes data retention
 
 function App() {
+  // Socket state
+  const [socket, setSocket] = useState(null);
+  
   // Temperature states
   const [outsideTemp, setOutsideTemp] = useState(null);
   const [currentTemp, setCurrentTemp] = useState(null);
@@ -29,7 +31,6 @@ function App() {
   const [rackTemperatures, setRackTemperatures] = useState(Array(10).fill(null));
   const [notification, setNotification] = useState(null);
 
-
   // Environmental metrics states
   const [energy, setEnergy] = useState(null);
   const [workload, setWorkload] = useState(null);
@@ -37,6 +38,9 @@ function App() {
   const [fanSpeed, setFanSpeed] = useState(null);
   const [airflow, setAirflow] = useState(null);
   const [failureRisk, setFailureRisk] = useState(null);
+  const [pue, setPue] = useState(null);
+  const [thermalStorage, setThermalStorage] = useState(null);
+  const [outsideHumidity, setOutsideHumidity] = useState(null);
 
   // Data history states
   const [temperatureData, setTemperatureData] = useState([]);
@@ -45,9 +49,26 @@ function App() {
   // System states
   const [connectionStatus, setConnectionStatus] = useState("disconnected");
   const [error, setError] = useState(null);
+  const [lastUpdated, setLastUpdated] = useState(null);
+
+  // Clean up old data points periodically
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const now = Date.now();
+      setTemperatureData(prev => prev.filter(point => 
+        now - new Date(point.time).getTime() < DATA_RETENTION_MS
+      ));
+      setEnvData(prev => prev.filter(point => 
+        now - new Date(point.time).getTime() < DATA_RETENTION_MS
+      ));
+    }, 60000); // Check every minute
+
+    return () => clearInterval(interval);
+  }, []);
 
   const addDataPoint = useCallback((newData) => {
     const time = new Date().toLocaleTimeString();
+    setLastUpdated(new Date());
 
     setTemperatureData((prevData) => {
       const newDataPoint = {
@@ -74,84 +95,105 @@ function App() {
     try {
       if (!msg.data) {
         throw new Error("Invalid message format: missing data");
-      } else {
-        if (msg.data.text) {
-          setNotification(msg.data.text);
-        }
-
-        const temperatureMetrics = {
-          temperature: msg.data.ambientTemp,
-          setTemperature: msg.data.targetTemp,
-          outsideTemperature: msg.data.outsideTemperature
-        };
-
-        if (msg.action !== undefined) setAction(msg.action);
-
-        if (temperatureMetrics.temperature) setCurrentTemp(parseFloat(temperatureMetrics.temperature).toFixed(1));
-        if (temperatureMetrics.setTemperature) setTargetTemp(parseFloat(temperatureMetrics.setTemperature).toFixed(1));
-        if (temperatureMetrics.outsideTemperature) setOutsideTemp(parseFloat(temperatureMetrics.outsideTemperature).toFixed(1));
-
-        // Process rack temperatures
-        if (msg.data.rackTemperatures && Array.isArray(msg.data.rackTemperatures)) {
-          setRackTemperatures(msg.data.rackTemperatures.map(temp =>
-            temp !== null ? parseFloat(temp).toFixed(1) : null
-          ));
-        }
-
-        const envMetrics = {
-          energy: msg.data.energy ? parseFloat(msg.data.energy) : energy,
-          workload: msg.data.workload ? parseFloat(msg.data.workload) : workload,
-          humidity: msg.data.humidity ? parseFloat(msg.data.humidity) : humidity,
-          fanSpeed: msg.data.fanSpeed ? parseFloat(msg.data.fanSpeed) : fanSpeed,
-          airflow: msg.data.airflow ? parseFloat(msg.data.airflow) : airflow,
-          failureRisk: msg.data.failureRisk ? parseFloat(msg.data.failureRisk) : failureRisk,
-        };
-
-        if (msg.data.energy) setEnergy(envMetrics.energy);
-        if (msg.data.workload) setWorkload(envMetrics.workload);
-        if (msg.data.humidity) setHumidity(envMetrics.humidity);
-        if (msg.data.fanSpeed) setFanSpeed(envMetrics.fanSpeed);
-        if (msg.data.airflow) setAirflow(envMetrics.airflow);
-        if (msg.data.failureRisk) setFailureRisk(envMetrics.failureRisk);
-
-        addDataPoint({
-          temperatureMetrics,
-          envMetrics
-        });
       }
+
+      if (msg.data.text) {
+        setNotification(msg.data.text);
+      }
+
+      const temperatureMetrics = {
+        temperature: msg.data.ambientTemp,
+        setTemperature: msg.data.targetTemp,
+        outsideTemperature: msg.data.outsideTemperature,
+        outsideHumidity: msg.data.outsideHumidity
+      };
+
+      if (msg.action !== undefined) setAction(msg.action);
+
+      if (temperatureMetrics.temperature) setCurrentTemp(parseFloat(temperatureMetrics.temperature).toFixed(1));
+      if (temperatureMetrics.setTemperature) setTargetTemp(parseFloat(temperatureMetrics.setTemperature).toFixed(1));
+      if (temperatureMetrics.outsideTemperature) setOutsideTemp(parseFloat(temperatureMetrics.outsideTemperature).toFixed(1));
+      if (temperatureMetrics.outsideHumidity) setOutsideHumidity(parseFloat(temperatureMetrics.outsideHumidity).toFixed(1));
+
+      // Process rack temperatures
+      if (msg.data.rackTemperatures && Array.isArray(msg.data.rackTemperatures)) {
+        setRackTemperatures(msg.data.rackTemperatures.map(temp =>
+          temp !== null ? parseFloat(temp).toFixed(1) : null
+        ));
+      }
+
+      const envMetrics = {
+        energy: msg.data.energy ? parseFloat(msg.data.energy) : energy,
+        workload: msg.data.workload ? parseFloat(msg.data.workload) : workload,
+        humidity: msg.data.humidity ? parseFloat(msg.data.humidity) : humidity,
+        fanSpeed: msg.data.fanSpeed ? parseFloat(msg.data.fanSpeed) : fanSpeed,
+        airflow: msg.data.airflow ? parseFloat(msg.data.airflow) : airflow,
+        failureRisk: msg.data.failureRisk ? parseFloat(msg.data.failureRisk) : failureRisk,
+        pue: msg.data.pue ? parseFloat(msg.data.pue) : pue,
+        thermalStorage: msg.data.thermalStorage ? parseFloat(msg.data.thermalStorage) : thermalStorage
+      };
+
+      if (msg.data.energy) setEnergy(envMetrics.energy);
+      if (msg.data.workload) setWorkload(envMetrics.workload);
+      if (msg.data.humidity) setHumidity(envMetrics.humidity);
+      if (msg.data.fanSpeed) setFanSpeed(envMetrics.fanSpeed);
+      if (msg.data.airflow) setAirflow(envMetrics.airflow);
+      if (msg.data.failureRisk) setFailureRisk(envMetrics.failureRisk);
+      if (msg.data.pue) setPue(envMetrics.pue);
+      if (msg.data.thermalStorage) setThermalStorage(envMetrics.thermalStorage);
+
+      addDataPoint({
+        temperatureMetrics,
+        envMetrics
+      });
     } catch (err) {
       console.error("Error processing incoming data:", err);
       setError(`Data processing error: ${err.message}`);
     }
-  }, [addDataPoint, outsideTemp, energy, workload, humidity, fanSpeed, airflow, failureRisk]);
+  }, [addDataPoint, energy, workload, humidity, fanSpeed, airflow, failureRisk, pue, thermalStorage]);
 
   const handleTargetTempChange = useCallback((value) => {
     try {
       const newTarget = Number(value);
       setTargetTemp(newTarget);
 
-      socket.emit("message", {
-        from: "UX",
-        to: "data_center",
-        data: { request: "setTemperature", value: newTarget },
-      });
+      if (socket && socket.connected) {
+        socket.emit("message", {
+          from: "UX",
+          to: "data_center",
+          data: { request: "setTemperature", value: newTarget },
+        });
+      }
     } catch (err) {
       console.error("Error setting target temperature:", err);
       setError(`Failed to set temperature: ${err.message}`);
     }
-  }, []);
+  }, [socket]);
 
   // Socket connection management
   useEffect(() => {
+    const socketInstance = io(SOCKET_URL, {
+      reconnectionAttempts: 5,
+      reconnectionDelay: 1000,
+      timeout: 20000,
+      transports: ["websocket"],
+      autoConnect: false
+    });
+
     const onConnect = () => {
       console.log("[Client] Connected to socket server");
       setConnectionStatus("connected");
-      socket.emit("register", { agentId: "UX" });
+      setError(null);
+      socketInstance.emit("register", { agentId: "UX", capabilities: ["monitoring"] });
     };
 
-    const onDisconnect = () => {
-      console.warn("[Client] Disconnected from socket server");
+    const onDisconnect = (reason) => {
+      console.log("[Client] Disconnected:", reason);
       setConnectionStatus("disconnected");
+      if (reason === "io server disconnect") {
+        // Server forced disconnect - need to manually reconnect
+        setTimeout(() => socketInstance.connect(), 1000);
+      }
     };
 
     const onConnectError = (err) => {
@@ -160,20 +202,44 @@ function App() {
       setError(`Connection error: ${err.message}`);
     };
 
-    socket.on("connect", onConnect);
-    socket.on("message", handleIncomingData);
-    socket.on("disconnect", onDisconnect);
-    socket.on("connect_error", onConnectError);
+    const onReconnectAttempt = (attempt) => {
+      console.log(`[Client] Reconnection attempt ${attempt}`);
+      setConnectionStatus(`reconnecting (attempt ${attempt})`);
+    };
 
-    socket.connect();
+    const onReconnectFailed = () => {
+      console.error("[Client] Reconnection failed");
+      setConnectionStatus("failed");
+      setError("Failed to reconnect to server");
+    };
+
+    // Set up event listeners
+    socketInstance.on("connect", onConnect);
+    socketInstance.on("message", handleIncomingData);
+    socketInstance.on("disconnect", onDisconnect);
+    socketInstance.on("connect_error", onConnectError);
+    socketInstance.on("reconnect_attempt", onReconnectAttempt);
+    socketInstance.on("reconnect_failed", onReconnectFailed);
+
+    // Connect after setting up listeners
+    socketInstance.connect();
+    setSocket(socketInstance);
 
     return () => {
-      socket.off("connect", onConnect);
-      socket.off("message", handleIncomingData);
-      socket.off("disconnect", onDisconnect);
-      socket.off("connect_error", onConnectError);
+      // Clean up event listeners
+      socketInstance.off("connect", onConnect);
+      socketInstance.off("message", handleIncomingData);
+      socketInstance.off("disconnect", onDisconnect);
+      socketInstance.off("connect_error", onConnectError);
+      socketInstance.off("reconnect_attempt", onReconnectAttempt);
+      socketInstance.off("reconnect_failed", onReconnectFailed);
+      
+      // Disconnect socket
+      if (socketInstance.connected) {
+        socketInstance.disconnect();
+      }
     };
-  }, [handleIncomingData]);
+  }, []);
 
   useEffect(() => {
     if (notification) {
@@ -187,15 +253,38 @@ function App() {
   return (
     <div className="p-6 font-sans max-w-6xl mx-auto">
       <header className="mb-6">
-        <h1 className="text-3xl font-bold">Data Center</h1>
-        <div className="flex items-center mt-2">
-          <span className={`inline-block w-3 h-3 rounded-full mr-2 ${connectionStatus === "connected" ? "bg-green-500" :
-            connectionStatus === "error" ? "bg-red-500" : "bg-yellow-500"
-            }`}></span>
-          <span className="text-sm">
-            {connectionStatus === "connected" ? "Connected" :
-              connectionStatus === "error" ? "Connection Error" : "Connecting..."}
-          </span>
+        <div className="flex justify-between items-start">
+          <div>
+            <h1 className="text-3xl font-bold">Data Center Monitoring</h1>
+            <div className="flex items-center mt-2">
+              <span className={`inline-block w-3 h-3 rounded-full mr-2 ${connectionStatus === "connected" ? "bg-green-500" :
+                connectionStatus === "error" ? "bg-red-500" : "bg-yellow-500"
+                }`}></span>
+              <span className="text-sm">
+                {connectionStatus === "connected" ? "Connected" :
+                  connectionStatus === "error" ? "Connection Error" : "Connecting..."}
+              </span>
+              {lastUpdated && (
+                <span className="text-sm text-gray-500 ml-4">
+                  Last update: {lastUpdated.toLocaleTimeString()}
+                </span>
+              )}
+            </div>
+          </div>
+          {/* <div className="bg-white p-2 rounded-lg shadow">
+            <h3 className="text-sm font-medium text-gray-500">Outside Humidity</h3>
+            <p className="text-xl font-light">
+              {outsideHumidity !== null ? `${outsideHumidity}%` : "--"}
+            </p>
+          </div> */}
+
+          <div className="bg-white p-2 rounded-lg shadow">
+          <h4 className="text-lg font-medium text-gray-500">PUE</h4>
+          <p className="text-3xl font-light mt-2">
+            {pue !== null ? pue.toFixed(2) : "--"}
+          </p>
+          </div>
+
         </div>
         {error && (
           <div className="mt-2 p-2 bg-red-100 text-red-700 rounded text-sm">
@@ -203,12 +292,13 @@ function App() {
           </div>
         )}
         {notification && (
-        <div className="fixed top-4 right-4 z-50 bg-white p-4 rounded-lg shadow-lg max-w-md animate-fade-in">
-          <MarkdownRenderer content={notification} />
-        </div>
-      )}
+          <div className="fixed top-4 right-4 z-50 bg-white p-4 rounded-lg shadow-lg max-w-md animate-fade-in">
+            <MarkdownRenderer content={notification} />
+          </div>
+        )}
       </header>
 
+      {/* Core Metrics Section */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
         <div className="bg-white p-4 rounded-lg shadow">
           <h3 className="text-lg font-medium text-gray-500">Outside</h3>
@@ -246,6 +336,7 @@ function App() {
         </div>
       </div>
 
+      {/* System Status Section */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
         <div className="bg-white p-4 rounded-lg shadow">
           <h2 className="text-xl font-semibold mb-4">System Actions</h2>
@@ -316,20 +407,20 @@ function App() {
           <h2 className="text-xl font-semibold mb-4">Failure Risk</h2>
           <div className="flex flex-col h-full justify-between">
             <p className="text-4xl font-light">
-              {failureRisk !== null ? `${failureRisk}%` : "--"}
+              {failureRisk !== null ? `${(failureRisk * 100).toFixed(1)}%` : "--"}
             </p>
             <div className="w-full bg-gray-200 rounded-full h-4 mt-4">
               <div
-                className={`h-4 rounded-full ${failureRisk < 30 ? 'bg-green-500' :
-                  failureRisk < 70 ? 'bg-yellow-500' : 'bg-red-500'
+                className={`h-4 rounded-full ${failureRisk < 0.3 ? 'bg-green-500' :
+                  failureRisk < 0.7 ? 'bg-yellow-500' : 'bg-red-500'
                   }`}
-                style={{ width: `${failureRisk || 0}%` }}
+                style={{ width: `${(failureRisk * 100) || 0}%` }}
               ></div>
             </div>
             <div className="mt-4">
               <p className="text-sm text-gray-600">
-                {failureRisk < 30 ? "Low risk - Normal operation" :
-                  failureRisk < 70 ? "Medium risk - Monitor closely" :
+                {failureRisk < 0.3 ? "Low risk - Normal operation" :
+                  failureRisk < 0.7 ? "Medium risk - Monitor closely" :
                     "High risk - Immediate attention required"}
               </p>
             </div>
@@ -337,11 +428,9 @@ function App() {
         </div>
       </div>
 
-      {/* Rack Temperatures Overview with Lighter Gradient Background */}
+      {/* Rack Temperatures Overview */}
       <div className="bg-white p-4 rounded-lg shadow mb-8">
         <h3 className="text-lg font-medium text-gray-500 mb-2">Rack Temperatures Overview</h3>
-
-        {/* Optional Legend */}
         <div className="flex justify-between items-center mt-2 text-xs text-gray-500 mb-3">
           <span>15°C (Cool)</span>
           <span>20°C</span>
@@ -351,19 +440,14 @@ function App() {
 
         <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
           {rackTemperatures.map((temp, index) => {
-            // Calculate color gradient between light blue (15°C) and light orange (30°C)
             const tempValue = temp !== null ? parseFloat(temp) : 15;
             const normalizedTemp = Math.min(Math.max(tempValue, 15), 30);
-            const ratio = (normalizedTemp - 15) / 10; // 15-25 range
+            const ratio = (normalizedTemp - 15) / 15;
 
-            // RGB values for lighter gradient (blue [191, 219, 254] to orange [254, 215, 170])
             const r = Math.round(191 + (254 - 191) * ratio);
             const g = Math.round(219 + (215 - 219) * ratio);
             const b = Math.round(254 + (170 - 254) * ratio);
             const bgColor = `rgb(${r}, ${g}, ${b})`;
-
-            // Text color remains dark for better readability on light background
-            const textColor = 'text-gray-800';
 
             return (
               <div
@@ -371,11 +455,11 @@ function App() {
                 className="p-2 border rounded transition-all duration-300"
                 style={{
                   backgroundColor: bgColor,
-                  borderColor: `rgba(120, 120, 120, 0.2)` // subtle border
+                  borderColor: `rgba(120, 120, 120, 0.2)`
                 }}
               >
-                <div className={`text-sm font-medium ${textColor}`}>Rack {index + 1}</div>
-                <div className={`text-xl ${textColor}`}>
+                <div className="text-sm font-medium text-gray-800">Rack {index + 1}</div>
+                <div className="text-xl text-gray-800">
                   {temp !== null ? `${temp} °C` : "--"}
                 </div>
               </div>
@@ -384,7 +468,8 @@ function App() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+      {/* Environmental Metrics Grid */}
+      <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-3 gap-6 mb-8">
         <div className="bg-white p-4 rounded-lg shadow">
           <h3 className="text-lg font-medium text-gray-500">Energy</h3>
           <p className="text-4xl font-light mt-2">
@@ -392,35 +477,21 @@ function App() {
           </p>
         </div>
 
-        <div className="bg-white p-4 rounded-lg shadow">
-          <h3 className="text-lg font-medium text-gray-500">Workload</h3>
-          <p className="text-4xl font-light mt-2">
-            {workload !== null ? `${workload}%` : "--"}
-          </p>
-        </div>
-
-        <div className="bg-white p-4 rounded-lg shadow">
+        {/* <div className="bg-white p-4 rounded-lg shadow">
           <h3 className="text-lg font-medium text-gray-500">Humidity</h3>
           <p className="text-4xl font-light mt-2">
             {humidity !== null ? `${humidity}%` : "--"}
           </p>
-        </div>
-      </div>
+        </div> */}
 
-
-
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-        <div className={`bg-white p-4 rounded-lg shadow ${action === ACTIONS.FAN_INCREMENT_SMALL ? 'bg-orange-50' :
-          action === ACTIONS.FAN_INCREMENT_LARGE ? 'bg-orange-200' : ''
-          }`}>
-          <div className="flex justify-between items-center">
-            <div>
-              <h3 className="text-lg font-medium text-gray-500">Fan Speed</h3>
-              <p className="text-4xl font-light mt-2">
-                {fanSpeed !== null ? `${fanSpeed} %` : "--"}
-              </p>
-            </div>
-          </div>
+        <div className={`bg-white p-4 rounded-lg shadow ${
+          action === ACTIONS.THERMAL_STORAGE_CHARGE ? 'bg-blue-50' :
+          action === ACTIONS.THERMAL_STORAGE_DISCHARGE ? 'bg-orange-50' : ''
+        }`}>
+          <h3 className="text-lg font-medium text-gray-500">Thermal Storage</h3>
+          <p className="text-4xl font-light mt-2">
+            {thermalStorage !== null ? `${thermalStorage} kWh` : "--"}
+          </p>
         </div>
 
         <div className={`bg-white p-4 rounded-lg shadow ${action === ACTIONS.THERMAL_STORAGE_CHARGE ? 'bg-blue-100' :
@@ -428,7 +499,7 @@ function App() {
           }`}>
           <div className="flex justify-between items-center">
             <div>
-              <h3 className="text-lg font-medium text-gray-500">Thermal Storage</h3>
+              <h3 className="text-lg font-medium text-gray-500">Thermal Storage Status</h3>
               <p className="text-4xl font-light mt-2">
                 {action === ACTIONS.THERMAL_STORAGE_CHARGE ? "Charging" :
                   action === ACTIONS.THERMAL_STORAGE_DISCHARGE ? "Discharging" : "Idle"}
@@ -447,16 +518,51 @@ function App() {
           </div>
         </div>
 
+      </div>
+
+      {/* Fan and Airflow Section */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+        
+        
+      <div className="bg-white p-4 rounded-lg shadow">
+          <h3 className="text-lg font-medium text-gray-500">Workload</h3>
+          <p className="text-4xl font-light mt-2">
+            {workload !== null ? `${(workload * 100).toFixed(1)}%` : "--"}
+          </p>
+        </div>
+
+        <div className={`bg-white p-4 rounded-lg shadow ${action === ACTIONS.FAN_INCREMENT_SMALL ? 'bg-orange-50' :
+          action === ACTIONS.FAN_INCREMENT_LARGE ? 'bg-orange-200' : ''
+          }`}>
+          <div className="flex justify-between items-center">
+            <div>
+              <h3 className="text-lg font-medium text-gray-500">Fan Speed</h3>
+              <p className="text-4xl font-light mt-2">
+                {fanSpeed !== null ? `${fanSpeed}%` : "--"}
+              </p>
+            </div>
+          </div>
+        </div>
+
         <div className="bg-white p-4 rounded-lg shadow">
           <h3 className="text-lg font-medium text-gray-500">Airflow</h3>
           <p className="text-4xl font-light mt-2">
             {airflow !== null ? `${airflow} CFM` : "--"}
           </p>
         </div>
+
+        {/* <div className="bg-white p-4 rounded-lg shadow">
+          <h3 className="text-lg font-medium text-gray-500">Outside Humidity</h3>
+          <p className="text-4xl font-light mt-2">
+            {outsideHumidity !== null ? `${outsideHumidity} %` : "--"}
+          </p>
+        </div> */}
+
       </div>
 
+      {/* Temperature Chart */}
       <div className="bg-white p-4 rounded-lg shadow mb-8">
-        <h2 className="text-xl font-semibold mb-4">Temperature</h2>
+        <h2 className="text-xl font-semibold mb-4">Temperature History</h2>
         <div className="h-80">
           <ResponsiveContainer width="100%" height="100%">
             <LineChart
@@ -541,6 +647,7 @@ function App() {
         </div>
       </div>
 
+      {/* Environmental Metrics Chart */}
       <div className="bg-white p-4 rounded-lg shadow">
         <h2 className="text-xl font-semibold mb-4">Environmental Metrics</h2>
         <div className="h-80">
@@ -555,7 +662,8 @@ function App() {
               <Tooltip
                 formatter={(value, name) => [
                   name === "Energy" ? `${value} kWh` :
-                    name === "Airflow" ? `${value} CFM` : `${value} %`,
+                    name === "Airflow" ? `${value} CFM` : 
+                    name === "PUE" ? value.toFixed(3) : `${value} %`,
                   name.charAt(0).toUpperCase() + name.slice(1).replace(/([A-Z])/g, ' $1')
                 ]}
                 labelFormatter={(time) => `Time: ${time}`}
@@ -611,6 +719,15 @@ function App() {
                 dataKey="failureRisk"
                 name="Failure Risk"
                 stroke="#f43f5e"
+                strokeWidth={2}
+                dot={false}
+                activeDot={{ r: 6 }}
+              />
+              <Line
+                type="monotone"
+                dataKey="pue"
+                name="PUE"
+                stroke="#6b7280"
                 strokeWidth={2}
                 dot={false}
                 activeDot={{ r: 6 }}
