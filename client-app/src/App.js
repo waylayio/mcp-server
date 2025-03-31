@@ -66,22 +66,22 @@ function App() {
     return () => clearInterval(interval);
   }, []);
 
-  const addDataPoint = useCallback((newData) => {
+  const addDataPoint = useCallback((newData, currentRackTemperatures) => {
     const time = new Date().toLocaleTimeString();
     setLastUpdated(new Date());
-
+  
     setTemperatureData((prevData) => {
       const newDataPoint = {
         time,
         ...newData.temperatureMetrics,
-        ...rackTemperatures.reduce((acc, temp, index) => {
+        ...currentRackTemperatures.reduce((acc, temp, index) => {
           acc[`rackTemp${index}`] = temp;
           return acc;
         }, {})
       };
       return [...prevData.slice(-MAX_DATA_POINTS), newDataPoint];
     });
-
+  
     setEnvData((prevData) => {
       const newEnvPoint = {
         time,
@@ -89,39 +89,41 @@ function App() {
       };
       return [...prevData.slice(-MAX_DATA_POINTS), newEnvPoint];
     });
-  }, [rackTemperatures]);
+  }, []);
 
   const handleIncomingData = useCallback((msg) => {
     try {
       if (!msg.data) {
         throw new Error("Invalid message format: missing data");
       }
-
+  
       if (msg.data.text) {
         setNotification(msg.data.text);
       }
-
+  
       const temperatureMetrics = {
         temperature: msg.data.ambientTemp,
         setTemperature: msg.data.targetTemp,
         outsideTemperature: msg.data.outsideTemperature,
         outsideHumidity: msg.data.outsideHumidity
       };
-
+  
       if (msg.action !== undefined) setAction(msg.action);
-
+  
       if (temperatureMetrics.temperature) setCurrentTemp(parseFloat(temperatureMetrics.temperature).toFixed(1));
       if (temperatureMetrics.setTemperature) setTargetTemp(parseFloat(temperatureMetrics.setTemperature).toFixed(1));
       if (temperatureMetrics.outsideTemperature) setOutsideTemp(parseFloat(temperatureMetrics.outsideTemperature).toFixed(1));
       if (temperatureMetrics.outsideHumidity) setOutsideHumidity(parseFloat(temperatureMetrics.outsideHumidity).toFixed(1));
-
+  
       // Process rack temperatures
+      let newRackTemperatures = rackTemperatures;
       if (msg.data.rackTemperatures && Array.isArray(msg.data.rackTemperatures)) {
-        setRackTemperatures(msg.data.rackTemperatures.map(temp =>
-          temp !== null ? parseFloat(temp).toFixed(1) : null
-        ));
+        newRackTemperatures = msg.data.rackTemperatures.map(temp =>
+          temp !== null ? parseFloat(temp).toFixed(1) : 0
+        );
+        setRackTemperatures(newRackTemperatures);
       }
-
+  
       const envMetrics = {
         energy: msg.data.energy ? parseFloat(msg.data.energy) : energy,
         workload: msg.data.workload ? parseFloat(msg.data.workload) : workload,
@@ -132,7 +134,7 @@ function App() {
         pue: msg.data.pue ? parseFloat(msg.data.pue) : pue,
         thermalStorage: msg.data.thermalStorage ? parseFloat(msg.data.thermalStorage) : thermalStorage
       };
-
+  
       if (msg.data.energy) setEnergy(envMetrics.energy);
       if (msg.data.workload) setWorkload(envMetrics.workload);
       if (msg.data.humidity) setHumidity(envMetrics.humidity);
@@ -141,17 +143,17 @@ function App() {
       if (msg.data.failureRisk) setFailureRisk(envMetrics.failureRisk);
       if (msg.data.pue) setPue(envMetrics.pue);
       if (msg.data.thermalStorage) setThermalStorage(envMetrics.thermalStorage);
-
+  
       addDataPoint({
         temperatureMetrics,
         envMetrics
-      });
+      }, newRackTemperatures);
     } catch (err) {
       console.error("Error processing incoming data:", err);
       setError(`Data processing error: ${err.message}`);
     }
   }, [addDataPoint, energy, workload, humidity, fanSpeed, airflow, failureRisk, pue, thermalStorage]);
-
+ 
   const handleTargetTempChange = useCallback((value) => {
     try {
       const newTarget = Number(value);

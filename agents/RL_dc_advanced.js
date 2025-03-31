@@ -3,14 +3,21 @@ import { io } from "socket.io-client";
 import fs from 'fs';
 import path from 'path';
 
-// Configuration with additional parameters
 const config = {
     environment: {
-        updateInterval: 60000,
+        updateInterval: 10000,
         updateExternalInterval: 30000,
         actionInterval: 1000,
         maxModelsToKeep: 5,
-        rackCount: 10
+        rackCount: 10,
+        maxRackPower: 20,         // kW per rack
+        minRackPower: 5,          // kW per rack
+        maxCoolingPower: 50,       // kW maximum cooling capacity
+        baseCoolingPower: 30,      // kW baseline cooling
+        coolingEffectPerFanPercent: 0.005, // °C reduction per 1% fan speed
+        heatGainPerRackPower: 0.1,  // °C increase per 1 kW of rack power
+        thermalStorageCapacity: 1000, // kWh
+        initialThermalStorage: 300   // kWh,
     },
     model: {
         hiddenUnits: [256, 128],  // Array of layer sizes
@@ -29,9 +36,7 @@ const config = {
         saveModelFreq: 1000,
         validationSplit: 0.2,
         gradClipValue: 1.0,
-        nStepReturns: 3,
-        learningRate: 0.001       // Required for optimizer
-    }
+        nStepReturns: 3    }
 };
 
 // Action definitions
@@ -46,19 +51,6 @@ const ACTIONS = {
     THERMAL_STORAGE_CHARGE: 7,
     THERMAL_STORAGE_DISCHARGE: 8
 };
-
-const ACTION_EFFECTS = {
-    [ACTIONS.COOL_INCREMENT_SMALL]: { temp: -0.2, fan: 5, energy: 2 },
-    [ACTIONS.COOL_DECREMENT_SMALL]: { temp: 0.2, fan: -5, energy: -2 },
-    [ACTIONS.FAN_INCREMENT_SMALL]: { temp: -0.1, fan: 10, energy: 3 },
-    [ACTIONS.COOL_INCREMENT_LARGE]: { temp: -0.5, fan: 10, energy: 6 },
-    [ACTIONS.COOL_DECREMENT_LARGE]: { temp: 0.5, fan: -10, energy: -6 },
-    [ACTIONS.FAN_INCREMENT_LARGE]: { temp: -0.2, fan: 20, energy: 5 },
-    [ACTIONS.MAINTAIN]: { temp: 0, fan: 0, energy: 0 },
-    [ACTIONS.THERMAL_STORAGE_CHARGE]: { temp: 0.5, fan: 0, energy: 5 },
-    [ACTIONS.THERMAL_STORAGE_DISCHARGE]: { temp: -0.5, fan: 0, energy: -3 }
-};
-
 
 class NoisyDense extends tf.layers.Layer {
     constructor(config) {
@@ -441,8 +433,35 @@ class EnhancedDataCenterEnvironment {
         this.consecutiveDangerSteps = 0;
         this.failureRiskHistory = [];
 
+        this.rackPowerDraws = Array(config.environment.rackCount).fill(0).map((_, i) =>
+            new Sensor(
+                (config.environment.minRackPower + config.environment.maxRackPower) / 2, // initial
+                config.environment.minRackPower,  // min
+                config.environment.maxRackPower,  // max
+                0.5, 
+                `Rack ${i+1} Power`
+            )
+        );
+        
+        this.totalPower = new Sensor(150, 50, 500, 10, 'Total Power');
+        this.coolingPower = new Sensor(
+            config.environment.baseCoolingPower, 
+            0, 
+            config.environment.maxCoolingPower, 
+            5, 
+            'Cooling Power'
+        );
+        
+        // Thermal storage using config values
+        this.thermalStorage = {
+            capacity: config.environment.thermalStorageCapacity,
+            current: config.environment.initialThermalStorage,
+            chargeRate: config.environment.maxCoolingPower * 0.5, // 50% of max cooling
+            dischargeRate: config.environment.maxCoolingPower * 0.8, // 80% of max cooling
+            efficiency: 0.85
+        };
+
         // Sensors
-        this.energy = new Sensor(20, 0, 200, 5, 'Energy');
         this.workload = new Sensor(0.5, 0, 1, 0.1, 'Workload');
         this.ambientTemperature = new Sensor(25, 15, 30, 1, 'Ambient Temp');
         this.humidity = new Sensor(50, 10, 90, 5, 'Humidity');
@@ -485,38 +504,129 @@ class EnhancedDataCenterEnvironment {
         this.socket.on("message", (msg) => {
             if (msg.data.temperature) {
                 this.currentWeather = msg.data;
-                if (this.currentWeather?.temperature < 5 || this.currentWeather?.temperature > 25) {
-                    this.currentEnergyPrices.current = 0.2;
-                }
-                console.log("Update Current Weather", this.currentWeather, "Update Energy Price", this.currentEnergyPrices.current);
+                this.updateEnergyPrices();
             }
         });
     }
 
+    updateEnergyPrices() {
+        const weather = this.currentWeather;
+        this.currentEnergyPrices = {
+            current: weather.temperature < 5 || weather.temperature > 25 ? 0.2 : 0.08,
+            forecast: Array(24).fill(weather.temperature < 5 || weather.temperature > 25 ? 0.2 : 0.08)
+        };
+    }
+
+    calculatePUE() {
+        const basePUE = 1.2;
+        const coolingEfficiency = 1 - (this.fanSpeed.get() / 100) * 0.15;
+        const ambientEffect = (this.ambientTemperature.get() - 20) * 0.01;
+        return Math.min(2.0, Math.max(1.1, basePUE + ambientEffect + (1 - coolingEfficiency)));
+    }
+
+    updateTemperatures() {
+        const ambientTemp = this.ambientTemperature.get();
+        
+        this.rackTemperatures.forEach((rack, i) => {
+          // Server heat generation (always ≥0)
+          const heatGain = this.rackPowerDraws[i].get() * 0.1; // 0.1°C per kW
+          
+          // Cooling effect (can't exceed heat gain + ambient)
+          const maxCooling = heatGain + (rack.value - ambientTemp) * 0.1;
+          const coolingEffect = Math.min(
+            maxCooling,
+            (this.fanSpeed.get() / 100) * config.environment.maxCoolingPower * 0.02
+          );
+      
+          // Update temperature (never < ambient)
+          rack.value = Math.max(
+            ambientTemp,
+            rack.value + (heatGain - coolingEffect)
+          );
+          console.log(
+            `Rack ${i}: ${rack.value.toFixed(2)}°C | ` +
+            `Ambient: ${ambientTemp.toFixed(2)}°C | ` +
+            `Cooling: ${coolingEffect.toFixed(2)}°C`
+          );
+        });
+      }
+
     updateMetrics() {
-        try {
-            this.energy.update();
-            this.workload.update();
-            this.ambientTemperature.update();
-            this.humidity.update();
-            this.fanSpeed.update();
-            this.airflow.update();
+        this.workload.update();
+        this.ambientTemperature.update();
+        this.humidity.update();
+      
+        // Update rack power draws based on workload
+        this.rackPowerDraws.forEach(rack => {
+          rack.value = 5 + (this.workload.get() * (config.environment.maxRackPower - 5));
+          rack.update();
+        });
+      
+        this.updateTemperatures(); 
+        
+        this.fanSpeed.update();
+        this.airflow.value = this.fanSpeed.get() * 5;
+        this.coolingPower.value = (this.fanSpeed.get() / 100) * config.environment.maxCoolingPower;
+        this.coolingPower.update();
+      
+        // Calculate PUE and total power
+        this.pue.value = this.calculatePUE();
+        const itPower = this.rackPowerDraws.reduce((sum, rack) => sum + rack.get(), 0);
+        this.totalPower.value = itPower * this.pue.value;
+        this.totalPower.update();
+      
+        // Update failure risk AFTER temperature updates
+        this.updateFailureRisk();
+    }
 
-            // Update rack temperatures with workload correlation
-            this.rackTemperatures.forEach((rack, i) => {
-                rack.value += (this.workload.get() - 0.5) * 0.2 * (1 + (i % 3) / 10);
-                rack.update();
-            });
-
-            // Update PUE based on energy
-            this.pue.value = 1.2 + (this.energy.get() / 200) * 0.8;
-            this.pue.update();
-
-            this.updateFailureRisk();
-            this.emitStatusUpdate("UPDATE");
-        } catch (error) {
-            console.error('Error updating metrics:', error);
-        }
+    getActionEffects(totalITPower) {
+        return {
+            [ACTIONS.COOL_INCREMENT_SMALL]: { 
+                temp: -0.2, 
+                fan: 5, 
+                energy: 0.05 * totalITPower // +5% of IT load
+            },
+            [ACTIONS.COOL_DECREMENT_SMALL]: { 
+                temp: 0.2, 
+                fan: -5, 
+                energy: -0.03 * totalITPower 
+            },
+            [ACTIONS.FAN_INCREMENT_SMALL]: { 
+                temp: -0.1, 
+                fan: 10, 
+                energy: 0.07 * totalITPower 
+            },
+            [ACTIONS.COOL_INCREMENT_LARGE]: { 
+                temp: -0.5, 
+                fan: 10, 
+                energy: 0.1 * totalITPower 
+            },
+            [ACTIONS.COOL_DECREMENT_LARGE]: { 
+                temp: 0.5, 
+                fan: -10, 
+                energy: -0.07 * totalITPower 
+            },
+            [ACTIONS.FAN_INCREMENT_LARGE]: { 
+                temp: -0.2, 
+                fan: 20, 
+                energy: 0.12 * totalITPower 
+            },
+            [ACTIONS.MAINTAIN]: { 
+                temp: 0, 
+                fan: 0, 
+                energy: 0 
+            },
+            [ACTIONS.THERMAL_STORAGE_CHARGE]: { 
+                temp: 0.5, 
+                fan: 0, 
+                energy: this.thermalStorage.chargeRate 
+            },
+            [ACTIONS.THERMAL_STORAGE_DISCHARGE]: { 
+                temp: -0.5, 
+                fan: 0, 
+                energy: -this.thermalStorage.dischargeRate * 0.6 
+            }
+        };
     }
 
     updateExternalMetrics() {
@@ -583,7 +693,7 @@ class EnhancedDataCenterEnvironment {
     getNormalizedState() {
         // Core metrics
         const coreState = [
-            this.energy.getNormalized(),
+            this.totalPower.getNormalized(),
             this.workload.getNormalized(),
             (this.ambientTemperature.get() - 15) / 15,
             (this.humidity.get() - 10) / 80,
@@ -613,81 +723,38 @@ class EnhancedDataCenterEnvironment {
             action = this.getEmergencyAction();
           }
         
-        const effect = ACTION_EFFECTS[action];
+          const totalITPower = this.rackPowerDraws.reduce((sum, rack) => sum + rack.get(), 0);
+          const effects = this.getActionEffects(totalITPower)[action];
+          
+          if (!effects) return;
+  
+          // Handle thermal storage actions
+          if (action === ACTIONS.THERMAL_STORAGE_CHARGE) {
+              const chargeAmount = Math.min(
+                  this.thermalStorage.capacity - this.thermalStorage.current,
+                  this.thermalStorage.chargeRate
+              );
+              this.thermalStorage.current += chargeAmount * this.thermalStorage.efficiency;
+          }
+          else if (action === ACTIONS.THERMAL_STORAGE_DISCHARGE) {
+              const dischargeAmount = Math.min(
+                  this.thermalStorage.current,
+                  this.thermalStorage.dischargeRate
+              );
+              this.thermalStorage.current -= dischargeAmount;
+          }
+  
+          // Apply cooling/fan effects
+          this.fanSpeed.value = Math.min(100, Math.max(0, this.fanSpeed.value + effects.fan));
+          
+          // Update temperatures
+          this.ambientTemperature.value += effects.temp * 0.5;
+          this.rackTemperatures.forEach(rack => {
+              rack.value += effects.temp * 0.3;
+          });
+  
 
         const currentFanSpeed = this.fanSpeed.get();
-    
-        // Skip fan-increasing actions if already at max
-        if ((action === ACTIONS.FAN_INCREMENT_SMALL || 
-            action === ACTIONS.FAN_INCREMENT_LARGE) &&
-            currentFanSpeed >= 100) {
-        return this.emitStatusUpdate(action); // No change
-        }
-
-        if (![ACTIONS.THERMAL_STORAGE_CHARGE, ACTIONS.THERMAL_STORAGE_DISCHARGE].includes(action)) {
-            this.targetTemperature.value = Math.max(18, Math.min(28,
-                this.targetTemperature.value + (effect.temp * 0.3)
-            ));
-        }
-
-        // Handle thermal storage actions
-        if (action === ACTIONS.THERMAL_STORAGE_CHARGE) {
-            const chargeAmount = Math.min(
-                this.thermalStorage.capacity - this.thermalStorage.current,
-                this.thermalStorage.chargeRate
-            );
-            this.thermalStorage.current += chargeAmount * this.thermalStorage.efficiency;
-            this.energy.value = Math.max(0, this.energy.value + effect.energy);
-        }
-        else if (action === ACTIONS.THERMAL_STORAGE_DISCHARGE) {
-            // const dischargeAmount = Math.min(
-            //     this.thermalStorage.current,
-            //     this.thermalStorage.dischargeRate
-            // );
-            // this.thermalStorage.current -= dischargeAmount;
-            // this.energy.value = Math.max(0, this.energy.value + effect.energy);
-            const available = this.thermalStorage.current;
-            const dischargeAmount = Math.min(
-                available,
-                this.thermalStorage.dischargeRate,
-                effect.energy * -1 // Ensure we don't discharge more than the action specifies
-            );
-            if (dischargeAmount > 0) {
-                this.thermalStorage.current -= dischargeAmount;
-                this.energy.value = Math.max(0, this.energy.value - (dischargeAmount * 0.6));
-            }
-        }
-        else {
-            // Handle regular cooling/fan actions
-            this.fanSpeed.value = Math.min(100, Math.max(0, this.fanSpeed.value + effect.fan));
-            this.energy.value = Math.max(0, this.energy.value + effect.energy);
-        }
-
-        // Calculate ambient temperature change
-        let ambientEffect = 0;
-
-        if (action === ACTIONS.COOL_INCREMENT_SMALL || action === ACTIONS.COOL_INCREMENT_LARGE) {
-            ambientEffect = effect.temp * 0.8;
-        }
-        else if (action === ACTIONS.FAN_INCREMENT_SMALL || action === ACTIONS.FAN_INCREMENT_LARGE) {
-            ambientEffect = effect.temp * 0.3;
-        }
-        else if (action === ACTIONS.THERMAL_STORAGE_DISCHARGE) {
-            ambientEffect = effect.temp * 0.6;
-        }
-
-        const oldAmbientTemp = this.ambientTemperature.value;
-        this.ambientTemperature.value = Math.min(30, Math.max(15, this.ambientTemperature.value + ambientEffect));
-        const ambientTempChange = this.ambientTemperature.value - oldAmbientTemp;
-
-        // Update rack temperatures
-        this.rackTemperatures.forEach((rack, index) => {
-            let rackTempChange = ambientTempChange * 0.7;
-            rackTempChange += (this.workload.get() - 0.5) * 0.1;
-            const hotspotFactor = 1 + (index % 3) * 0.1;
-            rack.value = Math.min(35, Math.max(15, rack.value + rackTempChange * hotspotFactor));
-            rack.value += (Math.random() - 0.5) * 0.2;
-        });
 
         // Update airflow based on fan speed
         this.airflow.value = this.fanSpeed.value * 5;
@@ -699,7 +766,7 @@ class EnhancedDataCenterEnvironment {
         let status = {
             from: this.agentId,
             data: {
-                energy: this.energy.get().toFixed(2),
+                energy: this.totalPower.get().toFixed(2),
                 workload: this.workload.get().toFixed(2),
                 ambientTemp: this.ambientTemperature.get().toFixed(2),
                 humidity: this.humidity.get().toFixed(2),
@@ -719,7 +786,7 @@ class EnhancedDataCenterEnvironment {
             Object.entries(ACTIONS).map(([name, value]) => [value, name])
         );
 
-        console.log(`[${this.agentId}] ${ACTION_NAMES[action]} | Energy:${this.energy.get().toFixed(2)}kW | Temp:${this.ambientTemperature.get().toFixed(2)}°C/${this.targetTemperature.get().toFixed(2)}°C | Fans:${this.fanSpeed.get().toFixed(2)}% | Risk:${(this.failureRisk * 100).toFixed(2)}% | Storage:${this.thermalStorage.current.toFixed(1)}kWh`);
+        console.log(`[${this.agentId}] ${ACTION_NAMES[action]} | Energy:${this.totalPower.get().toFixed(2)}kW | Temp:${this.ambientTemperature.get().toFixed(2)}°C/${this.targetTemperature.get().toFixed(2)}°C | Fans:${this.fanSpeed.get().toFixed(2)}% | Risk:${(this.failureRisk * 100).toFixed(2)}% | Storage:${this.thermalStorage.current.toFixed(1)}kWh`);
 
         if (action && action !== "UPDATE")
             status.action = action;
@@ -1370,7 +1437,7 @@ class EnhancedSimulation {
                 loss,
                 epsilon: this.agent.epsilon,
                 risk: this.env.failureRisk,
-                energy: this.env.energy.get(),
+                energy: this.env.totalPower.get(),
                 avgRackTemp: this.env.rackTemperatures.reduce((sum, rack) => sum + rack.get(), 0) / this.env.rackTemperatures.length
             };
             this.trainingLog.push(logEntry);
