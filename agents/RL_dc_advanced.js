@@ -462,7 +462,7 @@ class EnhancedDataCenterEnvironment {
         };
 
         // Sensors
-        this.workload = new Sensor(0.5, 0, 1, 0.1, 'Workload');
+        this.workload = new Sensor(0.5, 0, 1, 0.25, 'Workload');
         this.ambientTemperature = new Sensor(25, 15, 30, 1, 'Ambient Temp');
         this.humidity = new Sensor(50, 10, 90, 5, 'Humidity');
         this.targetTemperature = new Sensor(22, 18, 28, 0, 'Target Temp');
@@ -524,7 +524,7 @@ class EnhancedDataCenterEnvironment {
         return Math.min(2.0, Math.max(1.1, basePUE + ambientEffect + (1 - coolingEfficiency)));
     }
 
-    updateTemperatures() {
+    updateRackTemperatures() {
         const ambientTemp = this.ambientTemperature.get();
         
         this.rackTemperatures.forEach((rack, i) => {
@@ -562,7 +562,7 @@ class EnhancedDataCenterEnvironment {
           rack.update();
         });
       
-        this.updateTemperatures(); 
+        this.updateRackTemperatures(); 
         
         this.fanSpeed.update();
         this.airflow.value = this.fanSpeed.get() * 5;
@@ -573,9 +573,7 @@ class EnhancedDataCenterEnvironment {
         this.pue.value = this.calculatePUE();
         const itPower = this.rackPowerDraws.reduce((sum, rack) => sum + rack.get(), 0);
         this.totalPower.value = itPower * this.pue.value;
-        this.totalPower.update();
-      
-        // Update failure risk AFTER temperature updates
+        this.totalPower.update();      
         this.updateFailureRisk();
     }
 
@@ -691,7 +689,6 @@ class EnhancedDataCenterEnvironment {
     }
 
     getNormalizedState() {
-        // Core metrics
         const coreState = [
             this.totalPower.getNormalized(),
             this.workload.getNormalized(),
@@ -788,9 +785,8 @@ class EnhancedDataCenterEnvironment {
 
         console.log(`[${this.agentId}] ${ACTION_NAMES[action]} | Energy:${this.totalPower.get().toFixed(2)}kW | Temp:${this.ambientTemperature.get().toFixed(2)}°C/${this.targetTemperature.get().toFixed(2)}°C | Fans:${this.fanSpeed.get().toFixed(2)}% | Risk:${(this.failureRisk * 100).toFixed(2)}% | Storage:${this.thermalStorage.current.toFixed(1)}kWh`);
 
-        if (action && action !== "UPDATE")
+        if (action)
             status.action = action;
-
         this.socket.emit('message', status);
         return status;
     }
