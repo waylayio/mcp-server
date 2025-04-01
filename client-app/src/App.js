@@ -16,19 +16,20 @@ const ACTIONS = {
 };
 
 const SOCKET_URL = process.env.REACT_APP_SOCKET_URL || "http://localhost:3000";
-const MAX_DATA_POINTS = 100;
+const MAX_DATA_POINTS = 300;
 const DATA_RETENTION_MS = 15 * 60 * 1000; // 15 minutes data retention
 
 function App() {
   // Socket state
   const [socket, setSocket] = useState(null);
-  
+
   // Temperature states
   const [outsideTemp, setOutsideTemp] = useState(null);
   const [currentTemp, setCurrentTemp] = useState(null);
   const [targetTemp, setTargetTemp] = useState(20);
   const [action, setAction] = useState(null);
   const [rackTemperatures, setRackTemperatures] = useState(Array(10).fill(null));
+  const [hvacTemperatures, setHvacTemperatures] = useState(Array(4).fill(null));
   const [notification, setNotification] = useState(null);
 
   // Environmental metrics states
@@ -55,10 +56,10 @@ function App() {
   useEffect(() => {
     const interval = setInterval(() => {
       const now = Date.now();
-      setTemperatureData(prev => prev.filter(point => 
+      setTemperatureData(prev => prev.filter(point =>
         now - new Date(point.time).getTime() < DATA_RETENTION_MS
       ));
-      setEnvData(prev => prev.filter(point => 
+      setEnvData(prev => prev.filter(point =>
         now - new Date(point.time).getTime() < DATA_RETENTION_MS
       ));
     }, 60000); // Check every minute
@@ -66,10 +67,10 @@ function App() {
     return () => clearInterval(interval);
   }, []);
 
-  const addDataPoint = useCallback((newData, currentRackTemperatures) => {
+  const addDataPoint = useCallback((newData, currentRackTemperatures, currentHvacTemperatures) => {
     const time = new Date().toLocaleTimeString();
     setLastUpdated(new Date());
-  
+
     setTemperatureData((prevData) => {
       const newDataPoint = {
         time,
@@ -77,11 +78,15 @@ function App() {
         ...currentRackTemperatures.reduce((acc, temp, index) => {
           acc[`rackTemp${index}`] = temp;
           return acc;
+        }, {}),
+        ...currentHvacTemperatures.reduce((acc, temp, index) => {
+          acc[`hvacTemp${index}`] = temp;
+          return acc;
         }, {})
       };
       return [...prevData.slice(-MAX_DATA_POINTS), newDataPoint];
     });
-  
+
     setEnvData((prevData) => {
       const newEnvPoint = {
         time,
@@ -96,25 +101,25 @@ function App() {
       if (!msg.data) {
         throw new Error("Invalid message format: missing data");
       }
-  
+
       if (msg.data.text) {
         setNotification(msg.data.text);
       }
-  
+
       const temperatureMetrics = {
         temperature: msg.data.ambientTemp,
         setTemperature: msg.data.targetTemp,
         outsideTemperature: msg.data.outsideTemperature,
         outsideHumidity: msg.data.outsideHumidity
       };
-  
+
       if (msg.action !== undefined) setAction(msg.action);
-  
+
       if (temperatureMetrics.temperature) setCurrentTemp(parseFloat(temperatureMetrics.temperature).toFixed(1));
       if (temperatureMetrics.setTemperature) setTargetTemp(parseFloat(temperatureMetrics.setTemperature).toFixed(1));
       if (temperatureMetrics.outsideTemperature) setOutsideTemp(parseFloat(temperatureMetrics.outsideTemperature).toFixed(1));
       if (temperatureMetrics.outsideHumidity) setOutsideHumidity(parseFloat(temperatureMetrics.outsideHumidity).toFixed(1));
-  
+
       // Process rack temperatures
       let newRackTemperatures = rackTemperatures;
       if (msg.data.rackTemperatures && Array.isArray(msg.data.rackTemperatures)) {
@@ -123,7 +128,16 @@ function App() {
         );
         setRackTemperatures(newRackTemperatures);
       }
-  
+
+      // Process HVAC temperatures
+      let newHvacTemperatures = hvacTemperatures;
+      if (msg.data.hvacTemperatures && Array.isArray(msg.data.hvacTemperatures)) {
+        newHvacTemperatures = msg.data.hvacTemperatures.map(temp =>
+          temp !== null ? parseFloat(temp).toFixed(1) : 0
+        );
+        setHvacTemperatures(newHvacTemperatures);
+      }
+
       const envMetrics = {
         energy: msg.data.energy ? parseFloat(msg.data.energy) : energy,
         workload: msg.data.workload ? parseFloat(msg.data.workload) : workload,
@@ -134,7 +148,7 @@ function App() {
         pue: msg.data.pue ? parseFloat(msg.data.pue) : pue,
         thermalStorage: msg.data.thermalStorage ? parseFloat(msg.data.thermalStorage) : thermalStorage
       };
-  
+
       if (msg.data.energy) setEnergy(envMetrics.energy);
       if (msg.data.workload) setWorkload(envMetrics.workload);
       if (msg.data.humidity) setHumidity(envMetrics.humidity);
@@ -143,17 +157,17 @@ function App() {
       if (msg.data.failureRisk) setFailureRisk(envMetrics.failureRisk);
       if (msg.data.pue) setPue(envMetrics.pue);
       if (msg.data.thermalStorage) setThermalStorage(envMetrics.thermalStorage);
-  
+
       addDataPoint({
         temperatureMetrics,
         envMetrics
-      }, newRackTemperatures);
+      }, newRackTemperatures, newHvacTemperatures);
     } catch (err) {
       console.error("Error processing incoming data:", err);
       setError(`Data processing error: ${err.message}`);
     }
-  }, [addDataPoint, energy, workload, humidity, fanSpeed, airflow, failureRisk, pue, thermalStorage]);
- 
+  }, [addDataPoint, energy, workload, humidity, fanSpeed, airflow, failureRisk, pue, thermalStorage, rackTemperatures, hvacTemperatures]);
+
   const handleTargetTempChange = useCallback((value) => {
     try {
       const newTarget = Number(value);
@@ -235,7 +249,7 @@ function App() {
       socketInstance.off("connect_error", onConnectError);
       socketInstance.off("reconnect_attempt", onReconnectAttempt);
       socketInstance.off("reconnect_failed", onReconnectFailed);
-      
+
       // Disconnect socket
       if (socketInstance.connected) {
         socketInstance.disconnect();
@@ -251,6 +265,7 @@ function App() {
       return () => clearTimeout(timer);
     }
   }, [notification]);
+
 
   return (
     <div className="p-6 font-sans max-w-6xl mx-auto">
@@ -273,20 +288,13 @@ function App() {
               )}
             </div>
           </div>
-          {/* <div className="bg-white p-2 rounded-lg shadow">
-            <h3 className="text-sm font-medium text-gray-500">Outside Humidity</h3>
-            <p className="text-xl font-light">
-              {outsideHumidity !== null ? `${outsideHumidity}%` : "--"}
-            </p>
-          </div> */}
 
           <div className="bg-white p-2 rounded-lg shadow">
-          <h4 className="text-lg font-medium text-gray-500">PUE</h4>
-          <p className="text-3xl font-light mt-2">
-            {pue !== null ? pue.toFixed(2) : "--"}
-          </p>
+            <h4 className="text-lg font-medium text-gray-500">PUE</h4>
+            <p className="text-3xl font-light mt-2">
+              {pue !== null ? pue.toFixed(2) : "--"}
+            </p>
           </div>
-
         </div>
         {error && (
           <div className="mt-2 p-2 bg-red-100 text-red-700 rounded text-sm">
@@ -303,14 +311,14 @@ function App() {
       {/* Core Metrics Section */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
         <div className="bg-white p-4 rounded-lg shadow">
-          <h3 className="text-lg font-medium text-gray-500">Outside</h3>
+          <h3 className="text-lg font-medium text-gray-500">Outside Temperature</h3>
           <p className="text-4xl font-light mt-2">
             {outsideTemp !== null ? `${outsideTemp} °C` : "--"}
           </p>
         </div>
 
         <div className="bg-white p-4 rounded-lg shadow">
-          <h3 className="text-lg font-medium text-gray-500">Ambient</h3>
+          <h3 className="text-lg font-medium text-gray-500">Ambient Temperature</h3>
           <p className="text-4xl font-light mt-2">
             {currentTemp !== null ? `${currentTemp} °C` : "--"}
           </p>
@@ -323,7 +331,7 @@ function App() {
           }`}>
           <div className="flex justify-between items-center">
             <div>
-              <h3 className="text-lg font-medium text-gray-500">Target</h3>
+              <h3 className="text-lg font-medium text-gray-500">Target Ambient Temperature</h3>
               <p className="text-4xl font-light mt-2">{targetTemp} °C</p>
             </div>
           </div>
@@ -475,21 +483,13 @@ function App() {
         <div className="bg-white p-4 rounded-lg shadow">
           <h3 className="text-lg font-medium text-gray-500">Energy</h3>
           <p className="text-4xl font-light mt-2">
-            {energy !== null ? `${energy} kWh` : "--"}
+            {energy !== null ? `${parseFloat(energy).toFixed(1)} kWh` : "--"}
           </p>
         </div>
 
-        {/* <div className="bg-white p-4 rounded-lg shadow">
-          <h3 className="text-lg font-medium text-gray-500">Humidity</h3>
-          <p className="text-4xl font-light mt-2">
-            {humidity !== null ? `${humidity}%` : "--"}
-          </p>
-        </div> */}
-
-        <div className={`bg-white p-4 rounded-lg shadow ${
-          action === ACTIONS.THERMAL_STORAGE_CHARGE ? 'bg-blue-50' :
-          action === ACTIONS.THERMAL_STORAGE_DISCHARGE ? 'bg-orange-50' : ''
-        }`}>
+        <div className={`bg-white p-4 rounded-lg shadow ${action === ACTIONS.THERMAL_STORAGE_CHARGE ? 'bg-blue-50' :
+            action === ACTIONS.THERMAL_STORAGE_DISCHARGE ? 'bg-orange-50' : ''
+          }`}>
           <h3 className="text-lg font-medium text-gray-500">Thermal Storage</h3>
           <p className="text-4xl font-light mt-2">
             {thermalStorage !== null ? `${thermalStorage} kWh` : "--"}
@@ -519,14 +519,11 @@ function App() {
             )}
           </div>
         </div>
-
       </div>
 
       {/* Fan and Airflow Section */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-        
-        
-      <div className="bg-white p-4 rounded-lg shadow">
+        <div className="bg-white p-4 rounded-lg shadow">
           <h3 className="text-lg font-medium text-gray-500">Workload</h3>
           <p className="text-4xl font-light mt-2">
             {workload !== null ? `${(workload * 100).toFixed(1)}%` : "--"}
@@ -551,67 +548,6 @@ function App() {
           <p className="text-4xl font-light mt-2">
             {airflow !== null ? `${airflow} CFM` : "--"}
           </p>
-        </div>
-
-        {/* <div className="bg-white p-4 rounded-lg shadow">
-          <h3 className="text-lg font-medium text-gray-500">Outside Humidity</h3>
-          <p className="text-4xl font-light mt-2">
-            {outsideHumidity !== null ? `${outsideHumidity} %` : "--"}
-          </p>
-        </div> */}
-
-      </div>
-
-      {/* Temperature Chart */}
-      <div className="bg-white p-4 rounded-lg shadow mb-8">
-        <h2 className="text-xl font-semibold mb-4">Temperature History</h2>
-        <div className="h-80">
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart
-              data={temperatureData}
-              margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
-            >
-              <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
-              <XAxis dataKey="time" tick={{ fontSize: 12 }} tickMargin={10} />
-              <YAxis domain={['dataMin - 2', 'dataMax + 2']} tick={{ fontSize: 12 }} tickMargin={10} />
-              <Tooltip
-                formatter={(value, name) => [
-                  name === "Outside" ? `${value} °C` :
-                    name === "Target" ? `${value} °C` : `${value} °C`,
-                  name.charAt(0).toUpperCase() + name.slice(1).replace(/([A-Z])/g, ' $1')
-                ]}
-                labelFormatter={(time) => `Time: ${time}`}
-              />
-              <Legend />
-              <Line
-                type="monotone"
-                dataKey="temperature"
-                name="Current"
-                stroke="#3b82f6"
-                strokeWidth={2}
-                dot={false}
-                activeDot={{ r: 6 }}
-              />
-              <Line
-                type="monotone"
-                dataKey="setTemperature"
-                name="Target"
-                stroke="#10b981"
-                strokeWidth={2}
-                dot={false}
-                activeDot={{ r: 6 }}
-              />
-              <Line
-                type="monotone"
-                dataKey="outsideTemperature"
-                name="Outside"
-                stroke="#f59e0b"
-                strokeWidth={2}
-                dot={false}
-                activeDot={{ r: 6 }}
-              />
-            </LineChart>
-          </ResponsiveContainer>
         </div>
       </div>
 
@@ -664,8 +600,8 @@ function App() {
               <Tooltip
                 formatter={(value, name) => [
                   name === "Energy" ? `${value} kWh` :
-                    name === "Airflow" ? `${value} CFM` : 
-                    name === "PUE" ? value.toFixed(3) : `${value} %`,
+                    name === "Airflow" ? `${value} CFM` :
+                      name === "PUE" ? value.toFixed(3) : `${value} %`,
                   name.charAt(0).toUpperCase() + name.slice(1).replace(/([A-Z])/g, ' $1')
                 ]}
                 labelFormatter={(time) => `Time: ${time}`}
@@ -738,6 +674,134 @@ function App() {
           </ResponsiveContainer>
         </div>
       </div>
+
+      {/* HVAC Temperatures Overview */}
+      <div className="bg-white p-4 rounded-lg shadow mb-8">
+        <h3 className="text-lg font-medium text-gray-500 mb-2">HVAC Temperatures Overview</h3>
+        <div className="flex justify-between items-center mt-2 text-xs text-gray-500 mb-3">
+          <span>50°F (Cool)</span>
+          <span>60°F</span>
+          <span>80°F (Hot)</span>
+        </div>
+        <div className="w-full h-3 rounded-full mt-1 mb-4 bg-gradient-to-r from-blue-200 via-blue-100 to-orange-200"></div>
+
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+          {hvacTemperatures.map((temp, index) => {
+            const tempValue = temp !== null ? parseFloat(temp) : 50;
+            const normalizedTemp = Math.min(Math.max(tempValue, 50), 80);
+            const ratio = (normalizedTemp - 50) / 50;
+
+            const r = Math.round(191 + (254 - 191) * ratio);
+            const g = Math.round(219 + (215 - 219) * ratio);
+            const b = Math.round(254 + (170 - 254) * ratio);
+            const bgColor = `rgb(${r}, ${g}, ${b})`;
+
+            return (
+              <div
+                key={`rack-overview-${index}`}
+                className="p-2 border rounded transition-all duration-300"
+                style={{
+                  backgroundColor: bgColor,
+                  borderColor: `rgba(120, 120, 120, 0.2)`
+                }}
+              >
+                <div className="text-sm font-medium text-gray-800">HVAC {index + 1}</div>
+                <div className="text-xl text-gray-800">
+                  {temp !== null ? `${temp} °F` : "--"}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* HVAC Temperatures Chart */}
+      <div className="bg-white p-4 rounded-lg shadow mb-8">
+        <h2 className="text-xl font-semibold mb-4">HVAC Temperatures</h2>
+        <div className="h-80">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart
+              data={temperatureData}
+              margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
+            >
+              <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
+              <XAxis dataKey="time" tick={{ fontSize: 12 }} tickMargin={10} />
+              <YAxis domain={['dataMin - 2', 'dataMax + 2']} tick={{ fontSize: 12 }} tickMargin={10} />
+              <Tooltip
+                formatter={(value, name) => [`${value} °C`, name]}
+                labelFormatter={(time) => `Time: ${time}`}
+              />
+              <Legend />
+              {hvacTemperatures.map((_, index) => (
+                <Line
+                  key={`hvac-${index}`}
+                  type="monotone"
+                  dataKey={`hvacTemp${index}`}
+                  name={`HVAC ${index + 1}`}
+                  stroke={`hsl(${index * 90}, 70%, 50%)`}
+                  strokeWidth={2}
+                  dot={false}
+                  activeDot={{ r: 6 }}
+                />
+              ))}
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+
+            {/* Temperature Chart */}
+            <div className="bg-white p-4 rounded-lg shadow mb-8">
+        <h2 className="text-xl font-semibold mb-4">Ambient/Outside/Target Temperatures</h2>
+        <div className="h-80">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart
+              data={temperatureData}
+              margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
+            >
+              <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
+              <XAxis dataKey="time" tick={{ fontSize: 12 }} tickMargin={10} />
+              <YAxis domain={['dataMin - 2', 'dataMax + 2']} tick={{ fontSize: 12 }} tickMargin={10} />
+              <Tooltip
+                formatter={(value, name) => [
+                  name === "Outside" ? `${value} °C` :
+                    name === "Target" ? `${value} °C` : `${value} °C`,
+                  name.charAt(0).toUpperCase() + name.slice(1).replace(/([A-Z])/g, ' $1')
+                ]}
+                labelFormatter={(time) => `Time: ${time}`}
+              />
+              <Legend />
+              <Line
+                type="monotone"
+                dataKey="temperature"
+                name="Current"
+                stroke="#3b82f6"
+                strokeWidth={2}
+                dot={false}
+                activeDot={{ r: 6 }}
+              />
+              <Line
+                type="monotone"
+                dataKey="setTemperature"
+                name="Target"
+                stroke="#10b981"
+                strokeWidth={2}
+                dot={false}
+                activeDot={{ r: 6 }}
+              />
+              <Line
+                type="monotone"
+                dataKey="outsideTemperature"
+                name="Outside"
+                stroke="#f59e0b"
+                strokeWidth={2}
+                dot={false}
+                activeDot={{ r: 6 }}
+              />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+
     </div>
   );
 }

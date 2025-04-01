@@ -26,6 +26,21 @@ class WaylayAgent {
                 parameters: {
                     id: { type: "string", required: true, description: "The task id." }
                 }
+            },
+            {
+                name: "getLatestMetrics",
+                description: "getLatestMetrics.",
+                parameters: {
+                    resource: { type: "string", required: true, description: "The resource id." }
+                }
+            },
+            {
+                name: "storeData",
+                description: "StoreData",
+                parameters: {
+                    resource: { type: "string", required: true, description: "The resource id." },
+                    data: { type: "object", required: true, description: "Data payload" }
+                }
             }
         ];
         
@@ -45,6 +60,10 @@ class WaylayAgent {
                 this.handleTemplateRequest(msg.from, msg.data.template, msg.data.variables);
             } else if (msg.data?.request === "getTaskResult") {
                 this.handleGetTaskRequest(msg.from, msg.data.id);
+            } else if (msg.data?.request === "getLatestMetrics") {
+                this.handleGetLatestMetrics(msg.from, msg.data.resource);
+            } else if (msg.data?.request === "storeData") {
+                this.handleStoreData(msg.from, msg.data.resource, msg.data.data);
             }
         });
 
@@ -112,6 +131,54 @@ class WaylayAgent {
           });
         return response;
     }
+
+    async handleGetLatestMetrics(clientId, resource) {
+        try {
+            const result = await this.executeLatestMetrics(resource);
+            this.sendResponse(clientId, result.data);
+        } catch (err) {
+            this.sendResponse(clientId, { error: `Failed to get the task ${resource}`, details: err.message });
+        }
+    }
+
+    async executeLatestMetrics(resource) {
+        const url = `https://api.waylay.io/data/v1/messages/${resource}/current`;
+        const response = await axios.get(url, {
+            auth: {
+              username: this.apiKey,
+              password: this.apiSecret
+            },
+            headers: {
+              'Content-Type': 'application/json',
+            },
+          });
+        return response;
+    }
+
+    async handleStoreData(clientId, resource, payload) {
+        try {
+            const result = await this.executeStoreData(resource, payload);
+            this.sendResponse(clientId, result.data);
+        } catch (err) {
+            this.sendResponse(clientId, { error: `Failed to store data for ${resource}`, details: err.message });
+        }
+    }
+
+    async executeStoreData(resource, data) {
+        console.log("executeStoreData", resource, data)
+        const url = `https://api.waylay.io/data/v1/events/${resource}`;
+        const response = await axios.post(url, data, {
+            auth: {
+              username: this.apiKey,
+              password: this.apiSecret
+            },
+            headers: {
+              'Content-Type': 'application/json',
+            },
+          });
+        return response;
+    }
+
 
     sendResponse(clientId, data) {
         this.socket.emit("message", {
