@@ -10,7 +10,7 @@ const config = {
         actionInterval: 5000,
         maxModelsToKeep: 5,
         rackCount: 10,
-        hvacCount: 10,
+        hvacCount: 12,
         maxRackPower: 20,         // kW per rack
         minRackPower: 5,          // kW per rack
         maxCoolingPower: 50,       // kW maximum cooling capacity
@@ -435,33 +435,33 @@ class Sensor {
 
 class HVAC {
     constructor(
-      name = "",
-      energyUsage = 4.5,
-      setPointTemperature = 75,
-      airflow = 250,
-      normalEnergyUsage = 3.5,
-      staticPressure = 0.2,
-      currentTemperature = 73
+        name = "",
+        energyUsage = 4.5,
+        setPointTemperature = 75,
+        airflow = 250,
+        normalEnergyUsage = 3.5,
+        staticPressure = 0.2,
+        currentTemperature = 73
     ) {
-      this.name = name;
-      this.energyUsage = energyUsage;
-      this.setPointTemperature = setPointTemperature;
-      this.airflow = airflow;
-      this.normalEnergyUsage = normalEnergyUsage;
-      this.staticPressure = staticPressure;
-      this.currentTemperature = currentTemperature;
-      this.originalValues = {
-        energyUsage,
-        setPointTemperature,
-        airflow,
-        normalEnergyUsage,
-        staticPressure,
-        currentTemperature
-      };
+        this.name = name;
+        this.energyUsage = energyUsage;
+        this.setPointTemperature = setPointTemperature;
+        this.airflow = airflow;
+        this.normalEnergyUsage = normalEnergyUsage;
+        this.staticPressure = staticPressure;
+        this.currentTemperature = currentTemperature;
+        this.originalValues = {
+            energyUsage,
+            setPointTemperature,
+            airflow,
+            normalEnergyUsage,
+            staticPressure,
+            currentTemperature
+        };
     }
 
-    getData(){
-        return{
+    getData() {
+        return {
             energyUsage: this.energyUsage,
             setPointTemperature: this.setPointTemperature,
             airflow: this.airflow,
@@ -470,27 +470,27 @@ class HVAC {
             currentTemperature: this.currentTemperature
         }
     }
-    // Randomly adjust a value by 10-25% up or down
+    // Randomly adjust a value by 10% up or down
     randomFluctuation(value) {
-      const fluctuationPercent = 0.10 + Math.random() * 0.15; // 10-25%
-      const fluctuation = value * fluctuationPercent;
-      return Math.random() > 0.5 
-        ? value + fluctuation 
-        : value - fluctuation;
+        const fluctuationPercent = 0.05 + Math.random() * 0.05; // 15%
+        const fluctuation = value * fluctuationPercent;
+        return Math.random() > 0.5
+            ? value + fluctuation
+            : value - fluctuation;
     }
-  
+
     update() {
-      this.energyUsage = this.randomFluctuation(this.originalValues.energyUsage);
-      this.setPointTemperature = this.randomFluctuation(this.originalValues.setPointTemperature);
-      this.airflow = this.randomFluctuation(this.originalValues.airflow);
-      this.staticPressure = this.randomFluctuation(this.originalValues.staticPressure);
-      this.currentTemperature = this.randomFluctuation(this.originalValues.currentTemperature);
-      
-      // Normal energy usage might change less frequently
-      if (Math.random() > 0.7) { // 30% chance to change
-        this.normalEnergyUsage = this.randomFluctuation(this.originalValues.normalEnergyUsage);
-      }
-      return this;
+        this.energyUsage = this.randomFluctuation(this.originalValues.energyUsage);
+        this.setPointTemperature = this.randomFluctuation(this.originalValues.setPointTemperature);
+        this.airflow = this.randomFluctuation(this.originalValues.airflow);
+        this.staticPressure = this.randomFluctuation(this.originalValues.staticPressure);
+        this.currentTemperature = this.randomFluctuation(this.originalValues.currentTemperature);
+
+        // Normal energy usage might change less frequently
+        if (Math.random() > 0.7) { // 30% chance to change
+            this.normalEnergyUsage = this.randomFluctuation(this.originalValues.normalEnergyUsage);
+        }
+        return this;
     }
 
 }
@@ -796,10 +796,6 @@ class EnhancedDataCenterEnvironment {
     }
 
     executeAction(action) {
-        if (this.failureRisk > 0.9) {
-            action = this.getEmergencyAction();
-        }
-
         const totalITPower = this.rackPowerDraws.reduce((sum, rack) => sum + rack.get(), 0);
         const effects = this.getActionEffects(totalITPower)[action];
 
@@ -873,16 +869,16 @@ class EnhancedDataCenterEnvironment {
         this.socket.emit("message", {
             from: this.agentId,
             to: "waylay_agent",
-            data: { request: "storeData", resource: this.agentId, data: status.data}
+            data: { request: "storeData", resource: this.agentId, data: status.data }
         });
         this.hvacs.forEach(hvac => {
             this.socket.emit("message", {
                 from: this.agentId,
                 to: "waylay_agent",
-                data: { request: "storeData", resource: hvac.name, data: hvac.getData()}
+                data: { request: "storeData", resource: hvac.name, data: hvac.getData() }
             });
         });
-        
+
 
         return status;
     }
@@ -958,45 +954,52 @@ class EnhancedDQNAgent {
     }
 
     getEmergencyAction() {
-        const maxRackTemp = Math.max(...this.rackTemperatures.map(r => r.get()));
-        const currentFanSpeed = this.fanSpeed.get();
-        console.log("EmergencyAction!!!, maxRackTemp", maxRackTemp, "currentFanSpeed", currentFanSpeed);
+        try {
+            const maxRackTemp = Math.max(...this.env.rackTemperatures.map(r => r.get()));
+            const currentFanSpeed = this.env.fanSpeed.get();
+            console.log("EmergencyAction!!!, maxRackTemp", maxRackTemp, "currentFanSpeed", currentFanSpeed);
 
-        // Priority 1: Cool hottest racks (if fans aren't maxed)
-        if (maxRackTemp > 28 && currentFanSpeed < 100) {
-            return ACTIONS.COOL_INCREMENT_LARGE;
+            // Priority 1: Cool hottest racks (if fans aren't maxed)
+            if (maxRackTemp > 28 && currentFanSpeed < 100) {
+                return ACTIONS.COOL_INCREMENT_LARGE;
+            }
+
+            // Priority 2: Discharge thermal storage if available
+            if (this.env.thermalStorage.current > this.env.thermalStorage.dischargeRate &&
+                maxRackTemp > 26) {
+                return ACTIONS.THERMAL_STORAGE_DISCHARGE;
+            }
+
+            // Priority 3: Max fans (only if not already at max)
+            if (currentFanSpeed < 95) {
+                return ACTIONS.FAN_INCREMENT_LARGE;
+            }
+
+            // Last resort - try cooling if possible
+            if (currentFanSpeed >= 100 && maxRackTemp > 27) {
+                return ACTIONS.COOL_INCREMENT_LARGE;
+            }
+
+            return ACTIONS.MAINTAIN;
+
+        } catch (err) {
+            return ACTIONS.MAINTAIN;
+
         }
 
-        // Priority 2: Discharge thermal storage if available
-        if (this.thermalStorage.current > this.thermalStorage.dischargeRate &&
-            maxRackTemp > 26) {
-            return ACTIONS.THERMAL_STORAGE_DISCHARGE;
-        }
-
-        // Priority 3: Max fans (only if not already at max)
-        if (currentFanSpeed < 95) {
-            return ACTIONS.FAN_INCREMENT_LARGE;
-        }
-
-        // Last resort - try cooling if possible
-        if (currentFanSpeed >= 100 && maxRackTemp > 27) {
-            return ACTIONS.COOL_INCREMENT_LARGE;
-        }
-
-        return ACTIONS.MAINTAIN;
     }
 
     isValidAction(action, currentState) {
         const maxRackTemp = Math.max(...this.env.rackTemperatures.map(r => r.get()));
         if (maxRackTemp > config.environment.maxRackTemp) {
             const forbiddenActions = [
-              ACTIONS.COOL_DECREMENT_SMALL, 
-              ACTIONS.COOL_DECREMENT_LARGE,
-              ACTIONS.THERMAL_STORAGE_CHARGE,
-              ACTIONS.MAINTAIN // Force action if overheating
+                ACTIONS.COOL_DECREMENT_SMALL,
+                ACTIONS.COOL_DECREMENT_LARGE,
+                ACTIONS.THERMAL_STORAGE_CHARGE,
+                ACTIONS.MAINTAIN // Force action if overheating
             ];
             return !forbiddenActions.includes(action);
-          }
+        }
 
         const storageLevel = currentState[this.stateIndices.STORAGE_LEVEL] *
             this.env.thermalStorage.capacity;
@@ -1200,7 +1203,7 @@ class EnhancedDQNAgent {
                 (Math.abs(ambientTempNorm - targetTempNorm) * 0.7 +
                     Math.abs(maxRackTempNorm - 0.5) * 0.3
                 ) * (1 + workloadNorm)),
-            rackSafety: -Math.min(10, Math.pow(Math.max(0, maxRackTempNorm - 0.6)/0.4, 4)),
+            rackSafety: -Math.min(10, Math.pow(Math.max(0, maxRackTempNorm - 0.6) / 0.4, 4)),
             tempUniformity: -Math.min(1, rackTempGradient * 3),
             pueEfficiency: -Math.min(1, Math.abs(pueNorm - 0.25)),
             fanWear: -Math.min(1.5, Math.pow(fanSpeedNorm, 3)),
@@ -1276,6 +1279,10 @@ class EnhancedDQNAgent {
     }
 
     async act(state, training = true) {
+        if (this.env.failureRisk > 0.9) {
+            return this.getEmergencyAction();
+        }
+
         if (!this.model || !Array.isArray(state)) {
             return ACTIONS.MAINTAIN;
         }
