@@ -60,6 +60,8 @@ function App() {
   const [error, setError] = useState(null);
   const [lastUpdated, setLastUpdated] = useState(null);
 
+  const [powerStatus, setPowerStatus] = useState(true); // false = off, true = on
+
   // Helper function to determine alarm color
   const getAlarmColor = (count) => {
     if (count >= 10) return 'bg-red-100 border-red-300 text-red-800';
@@ -105,6 +107,27 @@ function App() {
     return () => clearInterval(interval);
   }, [socket]);
 
+  const handlePowerCut = useCallback(() => {
+    try {
+      if (socket && socket.connected) {
+        const newPowerStatus = !powerStatus;
+        setPowerStatus(newPowerStatus);
+
+        socket.emit("message", {
+          from: "UX",
+          to: "data_center",
+          data: {
+            request: newPowerStatus ? "powerOn" : "powerCut"
+          },
+        });
+
+        setNotification(newPowerStatus ? "Power restored!" : "Power cut initiated!");
+      }
+    } catch (err) {
+      console.error("Error sending power command:", err);
+      setError(`Failed to ${powerStatus ? "restore" : "cut"} power: ${err.message}`);
+    }
+  }, [socket, powerStatus]);
   const handleTargetWorkloadChange = useCallback((value) => {
     try {
       const newTarget = Number(value) / 100;
@@ -378,7 +401,7 @@ function App() {
       </header>
 
       {/* Core Metrics Section */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-6 mb-8">
         <div className="bg-white p-4 rounded-lg shadow">
           <h3 className="text-lg font-medium text-gray-500">Outside Temperature</h3>
           <p className="text-4xl font-light mt-2">
@@ -433,6 +456,36 @@ function App() {
           )}
         </div>
 
+        <button
+          onClick={handlePowerCut}
+          className={`p-3 rounded-lg border transition-colors ${powerStatus
+              ? 'bg-green-100 border-green-300 hover:bg-green-200'
+              : 'bg-red-100 border-red-300 hover:bg-red-200'
+            }`}
+        >
+          <div className="flex items-center">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              className={`h-6 w-6 mr-2 ${powerStatus ? 'text-green-500' : 'text-red-500'
+                }`}
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d={powerStatus ? "M5 12h14M12 5l7 7-7 7" : "M13 10V3L4 14h7v7l9-11h-7z"}
+              />
+            </svg>
+            <span>{powerStatus ? "PDU Power On" : "PDUs Power Cut"}</span>
+          </div>
+          <p className="text-sm mt-1">
+            {powerStatus ? "System is powered on" : "Immediately cut all power"}
+          </p>
+        </button>
+
         {/* <div className="bg-white p-2 rounded-lg shadow">
           <h4 className="text-lg font-medium text-gray-500">PUE</h4>
           <p className="text-3xl font-light mt-2">
@@ -440,8 +493,6 @@ function App() {
           </p>
         </div> */}
       </div>
-
-      export default App;
       <div className="bg-white p-4 rounded-lg shadow mb-8">
         <DataCenter3D
           rackTemperatures={rackTemperatures}
@@ -452,6 +503,7 @@ function App() {
           fanSpeed={fanSpeed}
           airflow={airflow}
           action={action}
+          powerStatus={{pdu: powerStatus, main: true, ups: true, generator: false,}}
         />
       </div>
 

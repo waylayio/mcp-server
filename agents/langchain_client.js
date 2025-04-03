@@ -4,7 +4,7 @@ import { RunnableSequence } from "@langchain/core/runnables";
 const MCP_SERVER_URL = "http://localhost:3000";
 const CLIENT_ID = "client_langchain";
 const TIMEOUT_DURATION = 20000;
-const LOOP_DURATION = 60000;
+const LOOP_DURATION = 15000;
 const TEMP_THRESHOLD = 0;
 const HVAC_COUNT = 1; // Number of HVAC units to test
 
@@ -168,7 +168,8 @@ class LangChainClient {
                 request: "runTemplate",
                 template: "HVAC_filter_check_V2",
                 variables: {
-                    currentTemperature: metrics.currentTemperature,
+                    //for testing, added 20 to trigger the alarm
+                    currentTemperature: metrics.currentTemperature + 20,
                     airflow: metrics.airflow,
                     energyUsage: metrics.energyUsage,
                     resource: hvacId,

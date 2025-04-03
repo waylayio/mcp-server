@@ -7,9 +7,9 @@ const DataCenter3D = ({
   hvacTemperatures = [],
   currentTemp = 22,
   targetTemp = 20,
-  powerStatus = { main: true, ups: true, generator: false },
+  powerStatus = { main: true, ups: true, generator: false, pdu: true},
   networkStatus = { active: true, bandwidth: 75 },
-  fireSuppressionStatus = { active: false }
+  fireSuppressionStatus = { active: false },
 }) => {
   // Refs
   const mountRef = useRef(null);
@@ -22,7 +22,8 @@ const DataCenter3D = ({
     leds: [],
     particles: [],
     statusLights: [],
-    networkFlows: []
+    networkFlows: [],
+    powerLights: []
   });
 
   // Constants
@@ -42,7 +43,7 @@ const DataCenter3D = ({
 
     const ranges = {
       rack: { min: 20, max: 35 },
-      hvac: { min: 40, max: 80 },
+      hvac: { min: 50, max: 100 },
       ups: { min: 20, max: 50 }
     };
 
@@ -54,7 +55,7 @@ const DataCenter3D = ({
   const createAlarmIcon = (alarmStatus = false, size = 0.15) => {
     const group = new THREE.Group();
     group.visible = alarmStatus;
-  
+
     // Bell shape (main body)
     const bellGeometry = new THREE.CylinderGeometry(
       size * 0.7, // top radius
@@ -64,7 +65,7 @@ const DataCenter3D = ({
       1,           // height segments
       true         // open ended
     );
-    
+
     // Flatten the bottom to make it more bell-like
     bellGeometry.attributes.position.array.forEach((v, i) => {
       if (i % 3 === 1 && v < -size * 0.3) { // Y coordinate check
@@ -72,7 +73,7 @@ const DataCenter3D = ({
       }
     });
     bellGeometry.attributes.position.needsUpdate = true;
-  
+
     const bellMaterial = new THREE.MeshStandardMaterial({
       color: 0xff0000,
       emissive: 0xff0000,
@@ -83,7 +84,7 @@ const DataCenter3D = ({
     const bell = new THREE.Mesh(bellGeometry, bellMaterial);
     bell.rotation.x = Math.PI; // Flip upside down
     group.add(bell);
-  
+
     // Clapper (the ball inside)
     const clapperGeometry = new THREE.SphereGeometry(size * 0.15, 8, 8);
     const clapperMaterial = new THREE.MeshStandardMaterial({
@@ -94,7 +95,7 @@ const DataCenter3D = ({
     const clapper = new THREE.Mesh(clapperGeometry, clapperMaterial);
     clapper.position.set(0, size * 0.2, 0);
     group.add(clapper);
-  
+
     // Mounting bracket
     const bracketGeometry = new THREE.CylinderGeometry(
       size * 0.15,
@@ -109,18 +110,18 @@ const DataCenter3D = ({
     bracket.position.set(0, size * 0.6, 0);
     bracket.rotation.x = Math.PI / 2;
     group.add(bracket);
-  
+
     // Animation - flashing and subtle swinging
     group.userData = {
       animate: () => {
         const time = Date.now() * 0.002;
-        
+
         // Pulsing emissive effect
         bellMaterial.emissiveIntensity = 0.3 + Math.sin(time * 5) * 0.3;
-        
+
         // Subtle swinging motion
         group.rotation.z = Math.sin(time * 2) * 0.1;
-        
+
         // Clapper movement
         clapper.position.y = size * 0.2 + Math.abs(Math.sin(time * 10)) * 0.03;
       },
@@ -133,7 +134,7 @@ const DataCenter3D = ({
         }
       }
     };
-  
+
     return group;
   };
 
@@ -159,6 +160,90 @@ const DataCenter3D = ({
     return group;
   }, [ROOM_LAYOUT.centralWall.height, ROOM_LAYOUT.centralWall.length, ROOM_LAYOUT.centralWall.thickness]);
 
+  const createRackPDU = (width, height, depth, hasPower) => {
+    const group = new THREE.Group();
+
+    // Main PDU body
+    const pdu = new THREE.Mesh(
+      new THREE.BoxGeometry(width, height, depth),
+      new THREE.MeshStandardMaterial({
+        color: hasPower ? new THREE.Color(0xff2211) : new THREE.Color(0x333333),
+        roughness: 0.6,
+        metalness: 0.3
+      })
+    );
+    group.add(pdu);
+
+    // Status light
+    const statusLight = new THREE.Mesh(
+      new THREE.SphereGeometry(0.05, 8, 8),
+      new THREE.MeshBasicMaterial({
+        color: hasPower ? 0x00ff00 : 0xff0000,
+        emissive: hasPower ? 0x00ff00 : 0xff0000,
+        emissiveIntensity: 0.8
+      })
+    );
+    statusLight.position.set(width * 0.4, 0, depth * 0.4);
+    group.add(statusLight);
+    animationRefs.current.powerLights.push(statusLight);
+
+    // Power outlets
+    for (let i = 0; i < 4; i++) {
+      const outlet = new THREE.Mesh(
+        new THREE.BoxGeometry(0.1, 0.05, 0.05),
+        new THREE.MeshStandardMaterial({ color: 0x111111 })
+      );
+      outlet.position.set(
+        width * 0.3,
+        0,
+        -depth * 0.4 + i * (depth * 0.8 / 3)
+      );
+      group.add(outlet);
+    }
+
+    return group;
+  };
+
+  // Create power cables between PDUs and racks
+  const createPowerCable = (start, end, thickness = 0.03) => {
+    const group = new THREE.Group();
+
+    // Calculate direction and length
+    const direction = new THREE.Vector3().subVectors(end, start);
+    const length = direction.length();
+    direction.normalize();
+
+    // Create cable using a tube geometry
+    const path = new THREE.CatmullRomCurve3([
+      start,
+      new THREE.Vector3(
+        (start.x + end.x) / 2,
+        (start.y + end.y) / 2 + 0.5,
+        (start.z + end.z) / 2
+      ),
+      end
+    ]);
+
+    const geometry = new THREE.TubeGeometry(
+      path,
+      20,  // segments
+      thickness, // radius
+      8,   // radial segments
+      false // closed
+    );
+
+    const material = new THREE.MeshStandardMaterial({
+      color: powerStatus.pdu? 0x333333 : 0xff3333,
+      roughness: 0.8,
+      metalness: 0.1
+    });
+
+    const cable = new THREE.Mesh(geometry, material);
+    group.add(cable);
+
+    return group;
+  };
+
   // Component creation functions
   const createServerRack = useCallback((width, height, depth, temp, index) => {
     const group = new THREE.Group();
@@ -167,18 +252,13 @@ const DataCenter3D = ({
     // Main frame
     const geometry = new THREE.BoxGeometry(width, height, depth);
     const material = new THREE.MeshStandardMaterial({
-      color: baseColor,
+      color: powerStatus.pdu? baseColor : new THREE.Color(0xff0000),
       roughness: 0.7,
       metalness: 0.2
     });
     const rack = new THREE.Mesh(geometry, material);
     rack.name = 'rackBody';
     group.add(rack);
-
-    // const alarmIcon = createAlarmIcon(false, 0.15);
-    // alarmIcon.position.set(0, height/2 + 0.2, 0); // Top center of rack
-    // group.add(alarmIcon); 
-    // group.userData.alarmIcon = alarmIcon; // Store reference for later control
 
     // Servers (stacked)
     for (let i = 0; i < 8; i++) {
@@ -198,13 +278,18 @@ const DataCenter3D = ({
           emissiveIntensity: 0.5
         })
       );
-      led.position.set(0, server.position.y, - depth/2);
+      led.position.set(0, server.position.y, - depth / 2);
       group.add(led);
       animationRefs.current.leds.push(led);
     }
 
+    // Add PDU to the side of the rack
+    const pdu = createRackPDU(0.3, 0.1, 0.2, powerStatus.pdu);
+    pdu.position.set(width * 0.8, -height * 0.4, 0);
+    group.add(pdu);
+
     return group;
-  }, [tempToColor]);
+  }, [tempToColor, powerStatus.pdu]);
 
   const createHVACUnit = useCallback((width, height, depth, temp) => {
     const group = new THREE.Group();
@@ -433,61 +518,16 @@ const DataCenter3D = ({
     pdu.position.set(ROOM_LAYOUT.powerRoom.x - 2, 1.5, ROOM_LAYOUT.powerRoom.z + 6);
     group.add(pdu);
 
+    // Main power distribution cables (from power room to server room)
+    const powerCable = createPowerCable(
+      new THREE.Vector3(ROOM_LAYOUT.powerRoom.x - 10, 1, ROOM_LAYOUT.powerRoom.z),
+      new THREE.Vector3(-20, 1, 0),
+      0.05
+    );
+    group.add(powerCable);
+
     return group;
   }, [ROOM_LAYOUT.powerRoom, powerStatus.generator, powerStatus.ups]);
-
-  // const createFireSuppressionSystem = useCallback(() => {
-  //   const group = new THREE.Group();
-
-  //   // Ceiling pipes
-  //   const pipeGeometry = new THREE.CylinderGeometry(0.1, 0.1, FLOOR_SIZE * 0.8, 16);
-  //   const pipeMaterial = new THREE.MeshStandardMaterial({ color: 0xcc0000 });
-
-  //   const mainPipe = new THREE.Mesh(pipeGeometry, pipeMaterial);
-  //   mainPipe.rotation.z = Math.PI / 2;
-  //   mainPipe.position.set(0, WALL_HEIGHT - 1, 0);
-  //   group.add(mainPipe);
-
-  //   // Branch pipes
-  //   for (let i = 0; i < 4; i++) {
-  //     const branchPipe = new THREE.Mesh(
-  //       new THREE.CylinderGeometry(0.08, 0.08, 20, 16),
-  //       pipeMaterial
-  //     );
-  //     branchPipe.position.set(-15 + i * 10, WALL_HEIGHT - 1.5, 0);
-  //     branchPipe.rotation.x = Math.PI / 2;
-  //     group.add(branchPipe);
-  //   }
-
-  //   // Nozzles
-  //   const nozzleGeometry = new THREE.ConeGeometry(0.15, 0.3, 8);
-  //   for (let i = 0; i < 8; i++) {
-  //     const nozzle = new THREE.Mesh(nozzleGeometry, pipeMaterial);
-  //     nozzle.position.set(
-  //       -20 + i * 5,
-  //       WALL_HEIGHT - 1.8,
-  //       (i % 2 === 0) ? 10 : -10
-  //     );
-  //     nozzle.rotation.x = Math.PI;
-  //     group.add(nozzle);
-  //   }
-
-  //   // Status indicator
-  //   const statusLight = new THREE.Mesh(
-  //     new THREE.SphereGeometry(0.3, 16, 16),
-  //     new THREE.MeshBasicMaterial({
-  //       color: fireSuppressionStatus.active ? 0xff0000 : 0x333333,
-  //       emissive: fireSuppressionStatus.active ? 0xff0000 : 0x333333,
-  //       emissiveIntensity: fireSuppressionStatus.active ? 1 : 0.1
-  //     })
-  //   );
-  //   statusLight.userData = { type: 'fire' };
-  //   statusLight.position.set(0, WALL_HEIGHT - 0.5, -ROOM_LAYOUT.serverRoom.depth / 2 + 1);
-  //   group.add(statusLight);
-  //   animationRefs.current.statusLights.push(statusLight);
-
-  //   return group;
-  // }, [FLOOR_SIZE, WALL_HEIGHT, ROOM_LAYOUT.serverRoom.depth, fireSuppressionStatus.active]);
 
   const createEntrance = useCallback(() => {
     const group = new THREE.Group();
@@ -534,259 +574,289 @@ const DataCenter3D = ({
     return group;
   }, [ROOM_LAYOUT.entrance]);
 
- // Move all creator functions outside the component or memoize them
-// These should not change between renders
-const creatorFunctions = {
-  createNOCCenter,
-  createPowerRoom,
-  // createFireSuppressionSystem,
-  createEntrance,
-  createCentralWall,
-  createServerRack,
-  createHVACUnit
-};
-
-// Main scene initialization (runs once)
-useEffect(() => {
-  const mount = mountRef.current;
-  if (!mount) return;
-
-  // Scene setup
-  const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0xf0f0f0);
-  sceneRef.current = scene;
-
-  const renderer = new THREE.WebGLRenderer({ antialias: true });
-  renderer.setSize(mount.clientWidth, mount.clientHeight);
-  renderer.shadowMap.enabled = true;
-  rendererRef.current = renderer;
-  mount.appendChild(renderer.domElement);
-
-  const camera = new THREE.PerspectiveCamera(
-    45,
-    mount.clientWidth / mount.clientHeight,
-    0.1,
-    1000
-  );
-  camera.position.set(30, 25, 30);
-  camera.lookAt(0, 0, 0);
-  cameraRef.current = camera;
-
-  const controls = new OrbitControls(camera, renderer.domElement);
-  controls.enableDamping = true;
-  controlsRef.current = controls;
-  controlsRef.current.saveState();
-
-  // Lighting (static)
-  const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
-  scene.add(ambientLight);
-
-  const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
-  directionalLight.position.set(10, 20, 10);
-  directionalLight.castShadow = true;
-  directionalLight.shadow.mapSize.width = 2048;
-  directionalLight.shadow.mapSize.height = 2048;
-  scene.add(directionalLight);
-
-  // Static environment (floor, walls, grid)
-  const floor = new THREE.Mesh(
-    new THREE.PlaneGeometry(FLOOR_SIZE, FLOOR_SIZE),
-    new THREE.MeshStandardMaterial({ color: 0x55ee99, roughness: 0.8 })
-  );
-  floor.rotation.x = -Math.PI / 2;
-  floor.receiveShadow = true;
-  scene.add(floor);
-
-  const gridHelper = new THREE.GridHelper(FLOOR_SIZE, 20, 0x555555, 0x333333);
-  scene.add(gridHelper);
-
-  const wallMaterial = new THREE.MeshStandardMaterial({
-    color: 0xaaaaaa,
-    transparent: true,
-    opacity: 0.3,
-    side: THREE.DoubleSide
-  });
-
-  const wallGeometry = new THREE.PlaneGeometry(FLOOR_SIZE, WALL_HEIGHT);
-  const walls = [
-    { position: [0, WALL_HEIGHT / 2, -FLOOR_SIZE / 2], rotation: [0, 0, 0] },
-    { position: [0, WALL_HEIGHT / 2, FLOOR_SIZE / 2], rotation: [0, Math.PI, 0] },
-    { position: [0, WALL_HEIGHT / 2, 0], rotation: [0, -Math.PI / 2, 0] }
-  ];
-
-  walls.forEach(wallConfig => {
-    const wall = new THREE.Mesh(wallGeometry, wallMaterial);
-    wall.position.set(...wallConfig.position);
-    wall.rotation.set(...wallConfig.rotation, 0);
-    scene.add(wall);
-  });
-
-  // Add static components
-  scene.add(creatorFunctions.createNOCCenter());
-  scene.add(creatorFunctions.createPowerRoom());
-  // scene.add(creatorFunctions.createFireSuppressionSystem());
-  scene.add(creatorFunctions.createEntrance());
-  scene.add(creatorFunctions.createCentralWall());
-
-  // Create groups for dynamic elements
-  const racksGroup = new THREE.Group();
-  racksGroup.name = 'racksGroup';
-  scene.add(racksGroup);
-
-  const hvacGroup = new THREE.Group();
-  hvacGroup.name = 'hvacGroup';
-  scene.add(hvacGroup);
-
-  // Animation loop
-  const animate = () => {
-    animationRef.current = requestAnimationFrame(animate);
-    controls.update();
-    renderer.render(scene, camera);
+  // Move all creator functions outside the component or memoize them
+  // These should not change between renders
+  const creatorFunctions = {
+    createNOCCenter,
+    createPowerRoom,
+    createEntrance,
+    createCentralWall,
+    createServerRack,
+    createHVACUnit,
+    createRackPDU,
+    createPowerCable
   };
-  animate();
 
-  // Handle resize
-  const handleResize = () => {
-    const width = mount.clientWidth;
-    const height = mount.clientHeight;
-    camera.aspect = width / height;
-    camera.updateProjectionMatrix();
-    renderer.setSize(width, height);
-  };
-  window.addEventListener('resize', handleResize);
+  // Main scene initialization (runs once)
+  useEffect(() => {
+    const mount = mountRef.current;
+    if (!mount) return;
 
-  return () => {
-    window.removeEventListener('resize', handleResize);
-    cancelAnimationFrame(animationRef.current);
-    mount?.removeChild(renderer.domElement);
-    controls.dispose();
-    renderer.dispose();
-    
-    scene.traverse(child => {
-      if (child.isMesh) {
-        child.geometry?.dispose();
-        if (Array.isArray(child.material)) {
-          child.material.forEach(m => m.dispose());
-        } else {
-          child.material?.dispose();
-        }
-      }
-    });
-  };
-}, []); // Empty dependency array ensures this runs once
+    // Scene setup
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0xf0f0f0);
+    sceneRef.current = scene;
 
-// Update dynamic elements
-useEffect(() => {
-  if (!sceneRef.current) return;
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(mount.clientWidth, mount.clientHeight);
+    renderer.shadowMap.enabled = true;
+    rendererRef.current = renderer;
+    mount.appendChild(renderer.domElement);
 
-  const scene = sceneRef.current;
-  const racksGroup = scene.getObjectByName('racksGroup');
-  const hvacGroup = scene.getObjectByName('hvacGroup');
+    const camera = new THREE.PerspectiveCamera(
+      45,
+      mount.clientWidth / mount.clientHeight,
+      0.1,
+      1000
+    );
+    camera.position.set(30, 25, 30);
+    camera.lookAt(0, 0, 0);
+    cameraRef.current = camera;
 
-  // Update or create server racks
-  if (racksGroup) {
-    // Clear existing racks
-    while (racksGroup.children.length) {
-      racksGroup.remove(racksGroup.children[0]);
-    }
-    
-    // Add current racks
-    rackTemperatures.forEach((temp, i) => {
-      const rack = creatorFunctions.createServerRack(0.8, 2.2, 1, temp, i);
-      const row = Math.floor(i / 5);
-      const col = i % 5;
-      rack.position.set(-25 + col * 3.5, 1.1, -15 + row * 5);
-      racksGroup.add(rack);
-    });
-  }
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controlsRef.current = controls;
+    controlsRef.current.saveState();
 
-  // Update or create HVAC units
-  if (hvacGroup) {
-    // Clear existing HVAC units
-    while (hvacGroup.children.length) {
-      hvacGroup.remove(hvacGroup.children[0]);
-    }
-    
-    // Add current HVAC units
-    //const hvacPerRow = Math.ceil(Math.sqrt(hvacTemperatures.length));
-    const hvacPerRow = hvacTemperatures.length/4;
-    hvacTemperatures.forEach((temp, i) => {
-      const hvac = creatorFunctions.createHVACUnit(2, 1.5, 2, temp);
-      const row = Math.floor(i / hvacPerRow);
-      const col = i % hvacPerRow;
-      // hvac.position.set(
-      //   (col - hvacPerRow / 2 + 0.5) * 8,
-      //   15,
-      //   (row - Math.ceil(hvacTemperatures.length / hvacPerRow) / 2 + 0.5) * 4
-      // );
-      //rack.position.set(-25 + col * 3.5, 1.1, -15 + row * 5);
+    // Lighting (static)
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+    scene.add(ambientLight);
 
-      hvac.position.set(
-        - 15 +(col - hvacPerRow / 2 + 0.5) * 10,
-        15,
-        (row - Math.ceil(hvacTemperatures.length / hvacPerRow) / 2 + 0.5) * 14
-      );
-      hvacGroup.add(hvac);
-    });
-  }
-}, [rackTemperatures, hvacTemperatures]);
+    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    directionalLight.position.set(10, 20, 10);
+    directionalLight.castShadow = true;
+    directionalLight.shadow.mapSize.width = 2048;
+    directionalLight.shadow.mapSize.height = 2048;
+    scene.add(directionalLight);
 
-// Animation effects management
-useEffect(() => {
-  if (!sceneRef.current) return;
+    // Static environment (floor, walls, grid)
+    const floor = new THREE.Mesh(
+      new THREE.PlaneGeometry(FLOOR_SIZE, FLOOR_SIZE),
+      new THREE.MeshStandardMaterial({ color: 0x55ee99, roughness: 0.8 })
+    );
+    floor.rotation.x = -Math.PI / 2;
+    floor.receiveShadow = true;
+    scene.add(floor);
 
-  let effectAnimationId; // Changed from const to let
+    const gridHelper = new THREE.GridHelper(FLOOR_SIZE, 20, 0x555555, 0x333333);
+    scene.add(gridHelper);
 
-  const animateEffects = () => {
-    const time = Date.now() * 0.001;
-    
-    // Animate LEDs
-    animationRefs.current.leds.forEach((led, i) => {
-      led.material.color.setHSL(0.3, 1, 0.5 + Math.sin(time * 2 + i) * 0.3);
+    const wallMaterial = new THREE.MeshStandardMaterial({
+      color: 0xaaaaaa,
+      transparent: true,
+      opacity: 0.3,
+      side: THREE.DoubleSide
     });
 
-    // Animate status lights
-    animationRefs.current.statusLights.forEach(light => {
-      if (light.userData.isFlashing) {
-        light.material.emissiveIntensity = 0.5 + Math.sin(time * 5) * 0.5;
-      }
+    const wallGeometry = new THREE.PlaneGeometry(FLOOR_SIZE, WALL_HEIGHT);
+    const walls = [
+      { position: [0, WALL_HEIGHT / 2, -FLOOR_SIZE / 2], rotation: [0, 0, 0] },
+      { position: [0, WALL_HEIGHT / 2, FLOOR_SIZE / 2], rotation: [0, Math.PI, 0] },
+      { position: [0, WALL_HEIGHT / 2, 0], rotation: [0, -Math.PI / 2, 0] }
+    ];
+
+    walls.forEach(wallConfig => {
+      const wall = new THREE.Mesh(wallGeometry, wallMaterial);
+      wall.position.set(...wallConfig.position);
+      wall.rotation.set(...wallConfig.rotation, 0);
+      scene.add(wall);
     });
 
-    // Animate network flows
-    animationRefs.current.networkFlows.forEach((screen, i) => {
-      screen.material.color.setHSL(0.6, 1, 0.5 + Math.sin(time * 3 + i) * 0.2);
-    });
+    // Add static components
+    scene.add(creatorFunctions.createNOCCenter());
+    scene.add(creatorFunctions.createPowerRoom());
+    scene.add(creatorFunctions.createEntrance());
+    scene.add(creatorFunctions.createCentralWall());
 
-    // Animate HVAC particles
-    const hvacGroup = sceneRef.current.getObjectByName('hvacGroup');
-    if (hvacGroup) {
-      hvacGroup.children.forEach(hvac => {
-        if (hvac.userData.particles) {
-          const positions = hvac.userData.particles.attributes.position.array;
-          for (let i = 0; i < positions.length; i += 3) {
-            positions[i + 1] -= 0.02 + Math.random() * 0.01;
-            if (positions[i + 1] < -0.5) {
-              positions[i + 1] = 0;
-              positions[i] = (Math.random() - 0.5) * 1.6;
-              positions[i + 2] = (Math.random() - 0.5) * 1.6;
-            }
+    // Create groups for dynamic elements
+    const racksGroup = new THREE.Group();
+    racksGroup.name = 'racksGroup';
+    scene.add(racksGroup);
+
+    const hvacGroup = new THREE.Group();
+    hvacGroup.name = 'hvacGroup';
+    scene.add(hvacGroup);
+
+    // Create power distribution for racks
+    const powerDistributionGroup = new THREE.Group();
+    powerDistributionGroup.name = 'powerDistributionGroup';
+    scene.add(powerDistributionGroup);
+
+    // Animation loop
+    const animate = () => {
+      animationRef.current = requestAnimationFrame(animate);
+      controls.update();
+      renderer.render(scene, camera);
+    };
+    animate();
+
+    // Handle resize
+    const handleResize = () => {
+      const width = mount.clientWidth;
+      const height = mount.clientHeight;
+      camera.aspect = width / height;
+      camera.updateProjectionMatrix();
+      renderer.setSize(width, height);
+    };
+    window.addEventListener('resize', handleResize);
+
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      cancelAnimationFrame(animationRef.current);
+      mount?.removeChild(renderer.domElement);
+      controls.dispose();
+      renderer.dispose();
+
+      scene.traverse(child => {
+        if (child.isMesh) {
+          child.geometry?.dispose();
+          if (Array.isArray(child.material)) {
+            child.material.forEach(m => m.dispose());
+          } else {
+            child.material?.dispose();
           }
-          hvac.userData.particles.attributes.position.needsUpdate = true;
         }
       });
+    };
+  }, []); // Empty dependency array ensures this runs once
+
+  // Update dynamic elements
+  useEffect(() => {
+    if (!sceneRef.current) return;
+
+    const scene = sceneRef.current;
+    const racksGroup = scene.getObjectByName('racksGroup');
+    const hvacGroup = scene.getObjectByName('hvacGroup');
+    const powerDistributionGroup = scene.getObjectByName('powerDistributionGroup');
+
+    // Update or create server racks
+    if (racksGroup) {
+      // Clear existing racks
+      while (racksGroup.children.length) {
+        racksGroup.remove(racksGroup.children[0]);
+      }
+
+      // Add current racks
+      rackTemperatures.forEach((temp, i) => {
+        const rack = creatorFunctions.createServerRack(0.8, 2.2, 1, temp, i);
+        const row = Math.floor(i / 5);
+        const col = i % 5;
+        rack.position.set(-25 + col * 3.5, 1.1, -15 + row * 5);
+        racksGroup.add(rack);
+      });
     }
-  };
 
-  // Run effects on every frame
-  effectAnimationId = requestAnimationFrame(function loop() {
-    animateEffects();
-    effectAnimationId = requestAnimationFrame(loop);
-  });
+    // Update or create HVAC units
+    if (hvacGroup) {
+      // Clear existing HVAC units
+      while (hvacGroup.children.length) {
+        hvacGroup.remove(hvacGroup.children[0]);
+      }
 
-  return () => {
-    cancelAnimationFrame(effectAnimationId);
-  };
-}, []);
+      // Add current HVAC units
+      const hvacPerRow = hvacTemperatures.length / 4;
+      hvacTemperatures.forEach((temp, i) => {
+        const hvac = creatorFunctions.createHVACUnit(2, 1.5, 2, temp);
+        const row = Math.floor(i / hvacPerRow);
+        const col = i % hvacPerRow;
+        hvac.position.set(
+          -15 + (col - hvacPerRow / 2 + 0.5) * 10,
+          15,
+          (row - Math.ceil(hvacTemperatures.length / hvacPerRow) / 2 + 0.5) * 14
+        );
+        hvacGroup.add(hvac);
+      });
+    }
+
+    // Update power distribution
+    if (powerDistributionGroup) {
+      // Clear existing power distribution
+      while (powerDistributionGroup.children.length) {
+        powerDistributionGroup.remove(powerDistributionGroup.children[0]);
+      }
+
+      // Create power distribution for racks
+      const rackCount = rackTemperatures.length;
+      for (let i = 0; i < rackCount; i++) {
+        const row = Math.floor(i / 5);
+        const col = i % 5;
+        const rackPos = new THREE.Vector3(-25 + col * 3.5, 1.1, -15 + row * 5);
+
+        // Create power cables from main distribution to each rack
+        const powerSourcePos = new THREE.Vector3(-20, 1, 0);
+        const rackPDUPos = new THREE.Vector3().copy(rackPos);
+        rackPDUPos.x += 0.4; // Offset to PDU position on rack
+        rackPDUPos.y -= 0.4;
+
+        const cable = creatorFunctions.createPowerCable(powerSourcePos, rackPDUPos, 0.02);
+        powerDistributionGroup.add(cable);
+      }
+    }
+  }, [rackTemperatures, hvacTemperatures, powerStatus.main]);
+
+  // Animation effects management
+  useEffect(() => {
+    if (!sceneRef.current) return;
+
+    let effectAnimationId; // Changed from const to let
+
+    const animateEffects = () => {
+      const time = Date.now() * 0.001;
+
+      // Animate LEDs
+      animationRefs.current.leds.forEach((led, i) => {
+        led.material.color.setHSL(0.3, 1, 0.5 + Math.sin(time * 2 + i) * 0.3);
+      });
+
+      // Animate status lights
+      animationRefs.current.statusLights.forEach(light => {
+        if (light.userData.isFlashing) {
+          light.material.emissiveIntensity = 0.5 + Math.sin(time * 5) * 0.5;
+        }
+      });
+
+      // Animate power lights
+      animationRefs.current.powerLights.forEach(light => {
+        if (!powerStatus.main) {
+          light.material.emissiveIntensity = 0.5 + Math.sin(time * 3) * 0.3;
+        }
+      });
+
+      // Animate network flows
+      animationRefs.current.networkFlows.forEach((screen, i) => {
+        screen.material.color.setHSL(0.6, 1, 0.5 + Math.sin(time * 3 + i) * 0.2);
+      });
+
+      // Animate HVAC particles
+      const hvacGroup = sceneRef.current.getObjectByName('hvacGroup');
+      if (hvacGroup) {
+        hvacGroup.children.forEach(hvac => {
+          if (hvac.userData.particles) {
+            const positions = hvac.userData.particles.attributes.position.array;
+            for (let i = 0; i < positions.length; i += 3) {
+              positions[i + 1] -= 0.02 + Math.random() * 0.01;
+              if (positions[i + 1] < -0.5) {
+                positions[i + 1] = 0;
+                positions[i] = (Math.random() - 0.5) * 1.6;
+                positions[i + 2] = (Math.random() - 0.5) * 1.6;
+              }
+            }
+            hvac.userData.particles.attributes.position.needsUpdate = true;
+          }
+        });
+      }
+    };
+
+    // Run effects on every frame
+    effectAnimationId = requestAnimationFrame(function loop() {
+      animateEffects();
+      effectAnimationId = requestAnimationFrame(loop);
+    });
+
+    return () => {
+      cancelAnimationFrame(effectAnimationId);
+    };
+  }, [powerStatus.main]);
   return (
     <div ref={mountRef} style={{ width: '100%', height: '600px', position: 'relative' }}>
       {/* Status overlay */}
@@ -801,6 +871,7 @@ useEffect(() => {
         fontFamily: 'monospace',
         zIndex: 100
       }}>
+
         <h3 style={{ marginTop: 0 }}>Data Center Status</h3>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '10px' }}>
           <div>
