@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import { io } from "socket.io-client";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
 import MarkdownRenderer from './MarkdownRenderer';
+import DataCenter3D from './DataCenter3D';
 
 const ACTIONS = {
   COOL_INCREMENT_SMALL: 0,
@@ -34,7 +35,7 @@ function App() {
 
   // Environmental metrics states
   const [energy, setEnergy] = useState(null);
-  const [workload, setWorkload] = useState(null);
+  const [workload, setWorkload] = useState(0.5);
   const [humidity, setHumidity] = useState(null);
   const [fanSpeed, setFanSpeed] = useState(null);
   const [airflow, setAirflow] = useState(null);
@@ -42,6 +43,13 @@ function App() {
   const [pue, setPue] = useState(null);
   const [thermalStorage, setThermalStorage] = useState(null);
   const [outsideHumidity, setOutsideHumidity] = useState(null);
+
+  // Alarm states
+  const [alarmData, setAlarmData] = useState({
+    hvac: 0,
+    rack: 0,
+    lastUpdated: null
+  });
 
   // Data history states
   const [temperatureData, setTemperatureData] = useState([]);
@@ -51,6 +59,13 @@ function App() {
   const [connectionStatus, setConnectionStatus] = useState("disconnected");
   const [error, setError] = useState(null);
   const [lastUpdated, setLastUpdated] = useState(null);
+
+  // Helper function to determine alarm color
+  const getAlarmColor = (count) => {
+    if (count >= 10) return 'bg-red-100 border-red-300 text-red-800';
+    if (count >= 5) return 'bg-orange-100 border-orange-300 text-orange-800';
+    return 'bg-green-100 border-green-300 text-green-800';
+  };
 
   // Clean up old data points periodically
   useEffect(() => {
@@ -66,6 +81,47 @@ function App() {
 
     return () => clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      socket.emit("message", {
+        from: "UX",
+        to: "waylay_agent",
+        data: {
+          request: "getDataForMetric", resource: "data_center",
+          metric: "critical_HVAC_Temperature_Alarm", period: 1, aggregate: "sum", grouping: "PT1M"
+        },
+      });
+      socket.emit("message", {
+        from: "UX",
+        to: "waylay_agent",
+        data: {
+          request: "getDataForMetric", resource: "data_center",
+          metric: "criticalRackAlarm", period: 1, aggregate: "sum", grouping: "PT1M"
+        },
+      });
+    }, 10000); // collect alarms
+
+    return () => clearInterval(interval);
+  }, [socket]);
+
+  const handleTargetWorkloadChange = useCallback((value) => {
+    try {
+      const newTarget = Number(value) / 100;
+      setWorkload(newTarget);
+
+      if (socket && socket.connected) {
+        socket.emit("message", {
+          from: "UX",
+          to: "data_center",
+          data: { request: "setWorkload", value: newTarget },
+        });
+      }
+    } catch (err) {
+      console.error("Error setting target workload:", err);
+      setError(`Failed to set workload: ${err.message}`);
+    }
+  }, [socket]);
 
   const addDataPoint = useCallback((newData, currentRackTemperatures, currentHvacTemperatures) => {
     const time = new Date().toLocaleTimeString();
@@ -100,10 +156,31 @@ function App() {
     try {
       if (!msg.data) {
         throw new Error("Invalid message format: missing data");
+        return;
       }
 
       if (msg.data.text) {
         setNotification(msg.data.text);
+        return;
+      }
+
+      if (msg.data.query && msg.data.query?.metric) {
+        if (msg.data.query.metric === "critical_HVAC_Temperature_Alarm") {
+          const sumHVACAlarms = msg.data.series.reduce((acc, [, value]) => acc + (value ?? 0), 0);
+          setAlarmData(prev => ({
+            ...prev,
+            hvac: sumHVACAlarms,
+            lastUpdated: new Date()
+          }));
+        } else if (msg.data.query.metric === "criticalRackAlarm") {
+          const sumRackAlarms = msg.data.series.reduce((acc, [, value]) => acc + (value ?? 0), 0);
+          setAlarmData(prev => ({
+            ...prev,
+            rack: sumRackAlarms,
+            lastUpdated: new Date()
+          }));
+        }
+        return;
       }
 
       const temperatureMetrics = {
@@ -266,7 +343,6 @@ function App() {
     }
   }, [notification]);
 
-
   return (
     <div className="p-6 font-sans max-w-6xl mx-auto">
       <header className="mb-6">
@@ -288,13 +364,6 @@ function App() {
               )}
             </div>
           </div>
-
-          <div className="bg-white p-2 rounded-lg shadow">
-            <h4 className="text-lg font-medium text-gray-500">PUE</h4>
-            <p className="text-3xl font-light mt-2">
-              {pue !== null ? pue.toFixed(2) : "--"}
-            </p>
-          </div>
         </div>
         {error && (
           <div className="mt-2 p-2 bg-red-100 text-red-700 rounded text-sm">
@@ -309,7 +378,7 @@ function App() {
       </header>
 
       {/* Core Metrics Section */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
         <div className="bg-white p-4 rounded-lg shadow">
           <h3 className="text-lg font-medium text-gray-500">Outside Temperature</h3>
           <p className="text-4xl font-light mt-2">
@@ -344,6 +413,46 @@ function App() {
             className="w-full mt-4 cursor-pointer"
           />
         </div>
+
+        <div className={`p-4 rounded-lg border ${getAlarmColor(Math.max(alarmData.hvac, alarmData.rack))}`}>
+          <h3 className="text-lg font-medium mb-2">Alarms (per minute)</h3>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <p className="text-sm">HVAC Alarms</p>
+              <p className="text-3xl font-bold">{alarmData.hvac}</p>
+            </div>
+            <div>
+              <p className="text-sm">Rack Alarms</p>
+              <p className="text-3xl font-bold">{alarmData.rack}</p>
+            </div>
+          </div>
+          {alarmData.lastUpdated && (
+            <p className="text-xs mt-2 opacity-70">
+              Last updated: {alarmData.lastUpdated.toLocaleTimeString()}
+            </p>
+          )}
+        </div>
+
+        {/* <div className="bg-white p-2 rounded-lg shadow">
+          <h4 className="text-lg font-medium text-gray-500">PUE</h4>
+          <p className="text-3xl font-light mt-2">
+            {pue !== null ? pue.toFixed(2) : "--"}
+          </p>
+        </div> */}
+      </div>
+
+      export default App;
+      <div className="bg-white p-4 rounded-lg shadow mb-8">
+        <DataCenter3D
+          rackTemperatures={rackTemperatures}
+          hvacTemperatures={hvacTemperatures}
+          currentTemp={currentTemp}
+          outsideTemp={outsideTemp}
+          targetTemp={targetTemp}
+          fanSpeed={fanSpeed}
+          airflow={airflow}
+          action={action}
+        />
       </div>
 
       {/* System Status Section */}
@@ -488,7 +597,7 @@ function App() {
         </div>
 
         <div className={`bg-white p-4 rounded-lg shadow ${action === ACTIONS.THERMAL_STORAGE_CHARGE ? 'bg-blue-50' :
-            action === ACTIONS.THERMAL_STORAGE_DISCHARGE ? 'bg-orange-50' : ''
+          action === ACTIONS.THERMAL_STORAGE_DISCHARGE ? 'bg-orange-50' : ''
           }`}>
           <h3 className="text-lg font-medium text-gray-500">Thermal Storage</h3>
           <p className="text-4xl font-light mt-2">
@@ -528,6 +637,14 @@ function App() {
           <p className="text-4xl font-light mt-2">
             {workload !== null ? `${(workload * 100).toFixed(1)}%` : "--"}
           </p>
+          <input
+            type="range"
+            min="0"
+            max="100"
+            value={workload * 100}
+            onChange={(e) => handleTargetWorkloadChange(e.target.value)}
+            className="w-full mt-4 cursor-pointer"
+          />
         </div>
 
         <div className={`bg-white p-4 rounded-lg shadow ${action === ACTIONS.FAN_INCREMENT_SMALL ? 'bg-orange-50' :
@@ -749,8 +866,8 @@ function App() {
         </div>
       </div>
 
-            {/* Temperature Chart */}
-            <div className="bg-white p-4 rounded-lg shadow mb-8">
+      {/* Temperature Chart */}
+      <div className="bg-white p-4 rounded-lg shadow mb-8">
         <h2 className="text-xl font-semibold mb-4">Ambient/Outside/Target Temperatures</h2>
         <div className="h-80">
           <ResponsiveContainer width="100%" height="100%">

@@ -41,6 +41,17 @@ class WaylayAgent {
                     resource: { type: "string", required: true, description: "The resource id." },
                     data: { type: "object", required: true, description: "Data payload" }
                 }
+            },
+            {
+                name: "getDataForMetric",
+                description: "Get data metric",
+                parameters: {
+                    resource: { type: "string", required: true, description: "The resource id." },
+                    metric: { type: "string", required: true, description: "metric" },
+                    period: { type: "string", required: true, description: "from" },
+                    grouping: { type: "string", required: true, description: "grouping" },
+                    aggregate: { type: "string", required: true, description: "aggregate" }
+                }
             }
         ];
         
@@ -64,6 +75,9 @@ class WaylayAgent {
                 this.handleGetLatestMetrics(msg.from, msg.data.resource);
             } else if (msg.data?.request === "storeData") {
                 this.handleStoreData(msg.from, msg.data.resource, msg.data.data);
+            } else if (msg.data?.request === "getDataForMetric") {
+                this.handleGetDataForMetric(msg.from, msg.data.resource, 
+                    msg.data.metric, msg.data.period, msg.data.aggregate, msg.data.grouping);
             }
         });
 
@@ -179,6 +193,31 @@ class WaylayAgent {
         return response;
     }
 
+    async handleGetDataForMetric(clientId, resource, metric, period, aggregate, grouping) {
+        try {
+            const result = await this.executeGetLatestMetrics(resource, metric, period, aggregate, grouping);
+            this.sendResponse(clientId, result.data);
+        } catch (err) {
+            this.sendResponse(clientId, { error: `Failed to get data for ${resource}`, details: err.message });
+        }
+    }
+
+    //period in minutes
+    async executeGetLatestMetrics(resource, metric, period, aggregate, grouping) {
+        console.log("executeGetLatestMetrics", resource, metric, period, aggregate, grouping);
+        const from = new Date() - period * 60 * 1000;
+        const url = `https://api.waylay.io/data/v1/series/${resource}/${metric}?from=${from}&aggregate=${aggregate}&grouping=${grouping}`;
+        const response = await axios.get(url, {
+            auth: {
+              username: this.apiKey,
+              password: this.apiSecret
+            },
+            headers: {
+              'Content-Type': 'application/json',
+            },
+          });
+        return response;
+    }
 
     sendResponse(clientId, data) {
         this.socket.emit("message", {

@@ -4,7 +4,9 @@ import { RunnableSequence } from "@langchain/core/runnables";
 const MCP_SERVER_URL = "http://localhost:3000";
 const CLIENT_ID = "client_langchain";
 const TIMEOUT_DURATION = 20000;
-const TEMP_THRESHOLD = 0
+const LOOP_DURATION = 60000;
+const TEMP_THRESHOLD = 0;
+const HVAC_COUNT = 1; // Number of HVAC units to test
 
 class LangChainClient {
     constructor() {
@@ -22,7 +24,6 @@ class LangChainClient {
                 agentId: this.CLIENT_ID,
                 capabilities: this.capabilities
             });
-            //await this.flow.invoke();
         });
 
         this.socket.on("message", (msg) => {
@@ -41,20 +42,85 @@ class LangChainClient {
                 console.log(`[Client] Temperature is below threshold ${TEMP_THRESHOLD}. Exiting flow.`);
                 return null; // Exit early
             }
-            const metrics = await this.requestMetrics();
-            return metrics ? { weather, metrics } : null;
+            
+            // Process all HVAC units
+            const results = [];
+            for (let i = 1; i <= HVAC_COUNT; i++) {
+                const hvacId = `HVAC${i}`;
+                console.log(`[Client] Processing ${hvacId}`);
+                
+                const metrics = await this.requestMetrics(hvacId);
+                if (metrics) {
+                    results.push({ weather, metrics, hvacId });
+                }
+            }
+            
+            return results.length > 0 ? results : null;
         },
         async (data) => {
             if (!data) return null; // Prevent calling processData on null
-            return this.processData(data);
+            
+            // Process each HVAC unit's data
+            const processedResults = [];
+            for (const item of data) {
+                const result = await this.processData({
+                    weather: item.weather,
+                    metrics: item.metrics,
+                    hvacId: item.hvacId
+                });
+                if (result) {
+                    processedResults.push({ result, hvacId: item.hvacId });
+                }
+            }
+            
+            return processedResults.length > 0 ? processedResults : null;
         },
-        async (result) => {
-            if (!result) return null;
-            await new Promise(resolve => setTimeout(resolve, 1000));
-            return this.handleProcessDataResponse(result);
-        }, async (data) => {
-            if (!data || data.isTheAlarmTriggered !== 'TRUE') return null;
-            return this.createWorkOrder(data);
+        async (results) => {
+            if (!results) return null;
+            
+            // Handle responses for each HVAC unit
+            const finalResults = [];
+            for (const item of results) {
+                await new Promise(resolve => setTimeout(resolve, 2000));
+                const response = await this.handleProcessDataResponse(item.result);
+                if (response) {
+                    finalResults.push({ ...response, hvacId: item.hvacId });
+                }
+            }
+            
+            return finalResults.length > 0 ? finalResults : null;
+        }, 
+        async (data) => {
+            if (!data) return null;
+            
+            // Create work orders for HVACs that need attention
+            const workOrders = [];
+            for (const item of data) {
+                if (item.isTheAlarmTriggered === 'TRUE') {
+                    const order = await this.createWorkOrder(item);
+                    if (order) {
+                        workOrders.push(order);
+                    }
+                }
+            }
+            
+            return workOrders.length > 0 ? workOrders : null;
+        }, 
+        async(orders) => {
+            if (orders) {
+                for (const order of orders) {
+                    console.log("work order:", order);
+                    this.socket.emit("message", {
+                        from: this.CLIENT_ID,
+                        to: "UX",
+                        data: {
+                            text: order
+                        }
+                    });
+                }
+            } else {
+                console.log('nothing to do, all good');
+            }
         }
     ]);
 
@@ -83,18 +149,18 @@ class LangChainClient {
         }, "weather_agent");
     }
 
-    async requestMetrics() {
+    async requestMetrics(hvacId) {
         return this.requestWithTimeout("message", {
             from: this.CLIENT_ID,
-            to: "metrics_agent",
-            data: { request: "get_metrics", assetName: "HVAC1" }
-        }, "metrics_agent");
+            to: "waylay_agent",
+            data: { request: "getLatestMetrics", resource: hvacId }
+        }, "waylay_agent");
     }
 
-    async processData({ weather, metrics }) {
+    async processData({ weather, metrics, hvacId }) {
         if (!metrics) return null; // Skip processing if metrics are missing
 
-        console.log(`[Client] Requesting to processData...`);
+        console.log(`[Client] Requesting to processData for ${hvacId}...`);
         return this.requestWithTimeout("message", {
             from: this.CLIENT_ID,
             to: "waylay_agent",
@@ -102,10 +168,10 @@ class LangChainClient {
                 request: "runTemplate",
                 template: "HVAC_filter_check_V2",
                 variables: {
-                    currentTemperature: metrics.temperature.value,
-                    airflow: metrics.airflow.value,
-                    energyUsage: metrics.energy.value,
-                    resource: metrics.asset,
+                    currentTemperature: metrics.currentTemperature,
+                    airflow: metrics.airflow,
+                    energyUsage: metrics.energyUsage,
+                    resource: hvacId,
                     outsideTemperature: weather.temperature,
                     city: weather.city
                 }
@@ -131,7 +197,10 @@ class LangChainClient {
         return this.requestWithTimeout("message", {
             from: this.CLIENT_ID,
             to: "waylay_work_order_agent",
-            data: { request: "askAgent", question: `create me a work order for HVAC1, description is ${data.description}, make it open case and assign it to veselin@waylay.io` }
+            data: { 
+                request: "askAgent", 
+                question: `create me a work order for ${data.hvacId}, description is ${data.description}, make it open case and assign it to veselin@waylay.io` 
+            }
         }, "waylay_work_order_agent");
     }
 }
@@ -143,4 +212,4 @@ setInterval(async () => {
     } catch (error) {
         console.error("Error in flow execution:", error);
     }
-}, 10000);
+}, LOOP_DURATION);
