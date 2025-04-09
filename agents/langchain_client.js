@@ -4,7 +4,7 @@ import { RunnableSequence } from "@langchain/core/runnables";
 const MCP_SERVER_URL = "http://localhost:3000";
 const CLIENT_ID = "client_langchain";
 const TIMEOUT_DURATION = 20000;
-const LOOP_DURATION = 15000;
+const LOOP_DURATION = 30000;
 const TEMP_THRESHOLD = 0;
 const HVAC_COUNT = 1; // Number of HVAC units to test
 

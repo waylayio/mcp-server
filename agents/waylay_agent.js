@@ -149,15 +149,15 @@ class WaylayAgent {
     async handleGetLatestMetrics(clientId, resource) {
         try {
             const result = await this.executeLatestMetrics(resource);
-            this.sendResponse(clientId, result.data);
+            this.sendResponse(clientId, result.data?.rawData);
         } catch (err) {
             this.sendResponse(clientId, { error: `Failed to get the task ${resource}`, details: err.message });
         }
     }
 
     async executeLatestMetrics(resource) {
-        const url = `https://api.waylay.io/data/v1/messages/${resource}/current`;
-        const response = await axios.get(url, {
+        const url = `https://api.waylay.io/rules/v1/sensors/getLatestMetrics/versions/2.0.5`;
+        const response = await axios.post(url, {properties: {resource}}, {
             auth: {
               username: this.apiKey,
               password: this.apiSecret

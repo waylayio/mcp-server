@@ -29,8 +29,8 @@ function App() {
   const [currentTemp, setCurrentTemp] = useState(null);
   const [targetTemp, setTargetTemp] = useState(20);
   const [action, setAction] = useState(null);
-  const [rackTemperatures, setRackTemperatures] = useState(Array(10).fill(null));
-  const [hvacTemperatures, setHvacTemperatures] = useState(Array(4).fill(null));
+  const [rackTemperatures, setRackTemperatures] = useState(Array(12).fill(null));
+  const [hvacTemperatures, setHvacTemperatures] = useState(Array(12).fill(null));
   const [notification, setNotification] = useState(null);
 
   // Environmental metrics states
@@ -48,6 +48,7 @@ function App() {
   const [alarmData, setAlarmData] = useState({
     hvac: 0,
     rack: 0,
+    ups: 0,
     lastUpdated: null
   });
 
@@ -102,6 +103,17 @@ function App() {
           metric: "criticalRackAlarm", period: 1, aggregate: "sum", grouping: "PT1M"
         },
       });
+      let i;
+      for( i = 1; i< 5; i++){
+        socket.emit("message", {
+          from: "UX",
+          to: "waylay_agent",
+          data: {
+            request: "getDataForMetric", resource: `UPS${i}`,
+            metric: "Load_Percentage_ALARM", period: 1, aggregate: "sum", grouping: "PT1M"
+          }
+        });
+      }
     }, 10000); // collect alarms
 
     return () => clearInterval(interval);
@@ -202,8 +214,16 @@ function App() {
             rack: sumRackAlarms,
             lastUpdated: new Date()
           }));
+          
+        } else if (msg.data.query.metric === "Load_Percentage_ALARM") {
+          const sumUPSAlarms = msg.data.series.reduce((acc, [, value]) => acc + (value ?? 0), 0);
+          setAlarmData(prev => ({
+            ...prev,
+            ups: sumUPSAlarms,
+            lastUpdated: new Date()
+          }));
         }
-        return;
+        return
       }
 
       const temperatureMetrics = {
@@ -437,16 +457,20 @@ function App() {
           />
         </div>
 
-        <div className={`p-4 rounded-lg border ${getAlarmColor(Math.max(alarmData.hvac, alarmData.rack))}`}>
+        <div className={`p-4 rounded-lg border ${getAlarmColor(Math.max(alarmData.hvac, alarmData.rack, alarmData.ups))}`}>
           <h3 className="text-lg font-medium mb-2">Alarms (per minute)</h3>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-3 gap-4">
             <div>
               <p className="text-sm">HVAC Alarms</p>
-              <p className="text-3xl font-bold">{alarmData.hvac}</p>
+              <p className="text-xl font-bold">{alarmData.hvac}</p>
             </div>
             <div>
               <p className="text-sm">Rack Alarms</p>
-              <p className="text-3xl font-bold">{alarmData.rack}</p>
+              <p className="text-xl font-bold">{alarmData.rack}</p>
+            </div>
+            <div>
+              <p className="text-sm">UPS Alarms</p>
+              <p className="text-xl font-bold">{alarmData.ups}</p>
             </div>
           </div>
           {alarmData.lastUpdated && (
@@ -609,7 +633,7 @@ function App() {
         </div>
         <div className="w-full h-3 rounded-full mt-1 mb-4 bg-gradient-to-r from-blue-200 via-blue-100 to-orange-200"></div>
 
-        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+        <div className="grid grid-cols-2 sm:grid-cols-6 gap-2">
           {rackTemperatures.map((temp, index) => {
             const tempValue = temp !== null ? parseFloat(temp) : 15;
             const normalizedTemp = Math.min(Math.max(tempValue, 15), 30);
@@ -854,7 +878,7 @@ function App() {
         </div>
         <div className="w-full h-3 rounded-full mt-1 mb-4 bg-gradient-to-r from-blue-200 via-blue-100 to-orange-200"></div>
 
-        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+        <div className="grid grid-cols-2 sm:grid-cols-6 gap-2">
           {hvacTemperatures.map((temp, index) => {
             const tempValue = temp !== null ? parseFloat(temp) : 50;
             const normalizedTemp = Math.min(Math.max(tempValue, 50), 80);

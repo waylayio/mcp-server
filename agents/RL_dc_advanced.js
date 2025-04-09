@@ -9,8 +9,9 @@ const config = {
         updateExternalInterval: 30000,
         actionInterval: 5000,
         maxModelsToKeep: 5,
-        rackCount: 10,
+        rackCount: 18,
         hvacCount: 12,
+        upsCount: 4,
         maxRackPower: 20,         // kW per rack
         minRackPower: 5,          // kW per rack
         maxCoolingPower: 50,       // kW maximum cooling capacity
@@ -408,6 +409,62 @@ class PrioritizedReplayMemory {
     }
 }
 
+class UPSDataGenerator {
+    constructor(name) {
+        this.name = name || 'UPS';
+        this.previousIteration = 0;
+        this.numRecords = 100;
+        this.normalRecords = 90;
+        this.inputVoltage = 0;
+        this.outputVoltage = 0;
+        this.batteryVoltage = 0;
+        this.stateOfCharge = 0;
+        this.stateOfHealth = 0;
+        this.loadPercentage = 0;
+        this.runtimeRemaining = 0;
+    }
+
+    updateValues() {
+        this.inputVoltage = Math.random() * (240 - 220) + 220; // Normal input voltage
+        this.outputVoltage = Math.random() * (240 - 220) + 220; // Normal output voltage
+        this.batteryVoltage = Math.random() * (54 - 48) + 48; // Normal battery voltage
+        this.stateOfCharge = Math.floor(Math.random() * (100 - 80) + 80); // Normal charge level
+        this.stateOfHealth = Math.floor(Math.random() * (96 - 80) + 80); // Normal health percentage
+        this.loadPercentage = Math.floor(Math.random() * (81 - 50) + 50); // Normal load percentage
+        this.runtimeRemaining = Math.floor(Math.random() * (61 - 10) + 10); // Normal runtime remaining
+
+        // Introduce anomalies for the last 10 records
+        const i = this.previousIteration % this.numRecords;
+        if (i >= this.normalRecords) {
+            if (Math.random() < 0.5) {
+                console.log("Generating Under-voltage anomaly");
+                this.inputVoltage = Math.random() * (200 - 180) + 180;
+            } else {
+                console.log("Generating Over-voltage anomaly");
+                this.outputVoltage = Math.random() * (260 - 250) + 250;
+            }
+        }
+    }
+
+    generateData() {
+        this.previousIteration += 1;
+        this.updateValues();
+
+        return {
+            resource: this.name,
+            Input_Voltage_V: this.inputVoltage,
+            Output_Voltage_V: this.outputVoltage,
+            Battery_Voltage_V: this.batteryVoltage,
+            State_of_Charge: this.stateOfCharge,
+            State_of_Health: this.stateOfHealth,
+            Load_Percentage: this.loadPercentage,
+            Runtime_Remaining_min: this.runtimeRemaining
+        };
+    }
+}
+
+
+
 class Sensor {
     constructor(initialValue, min = 0, max = 100, variation = 1, name = '') {
         this.value = initialValue;
@@ -552,6 +609,11 @@ class EnhancedDataCenterEnvironment {
             new Sensor(22, 15, 35, 0.5, `Rack:${i + 1} Temp`)
         );
 
+        // Rack temperatures
+        this.UPS_set = Array(config.environment.upsCount).fill(0).map((_, i) =>
+            new UPSDataGenerator(`UPS${i + 1}`)
+        );
+
         // Metrics
         this.pue = new Sensor(1.5, 1.0, 3.0, 0.05, 'PUE');
         this.failureRisk = 0;
@@ -631,6 +693,9 @@ class EnhancedDataCenterEnvironment {
 
     updateMetrics() {
         //this.hvac.update();
+        // this.UPS_set.forEach(ups => {
+        //     ups.generateData();
+        // })
         this.hvacs.forEach(hvac => {
             hvac.update();
         });
@@ -887,6 +952,7 @@ class EnhancedDataCenterEnvironment {
                 outsideTemperature: this.currentWeather.temperature.toFixed(2),
                 outsideHumidity: this.currentWeather.humidity.toFixed(2),
                 hvacTemperatures: this.hvacs.map(h => h.currentTemperature.toFixed(2)),
+                upsData: this.UPS_set.map(ups => ups.generateData()),
             }
         };
 
