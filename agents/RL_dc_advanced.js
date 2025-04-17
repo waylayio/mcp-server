@@ -498,7 +498,8 @@ class HVAC {
         airflow = 250,
         normalEnergyUsage = 3.5,
         staticPressure = 0.2,
-        currentTemperature = 75
+        currentTemperature = 75,
+        humidity = 45
     ) {
         this.name = name;
         this.energyUsage = energyUsage;
@@ -507,49 +508,101 @@ class HVAC {
         this.normalEnergyUsage = normalEnergyUsage;
         this.staticPressure = staticPressure;
         this.currentTemperature = currentTemperature;
+        this.humidity = humidity;
         this.originalValues = {
             energyUsage,
             setPointTemperature,
             airflow,
             normalEnergyUsage,
             staticPressure,
-            currentTemperature
+            currentTemperature,
+            humidity
+        };
+        this.lastUpdateTime = Date.now();
+    }
+
+    // Get current system state
+    getData() {
+        return {
+            name: this.name,
+            energyUsage: parseFloat(this.energyUsage.toFixed(2)),
+            setPointTemperature: parseFloat(this.setPointTemperature.toFixed(1)),
+            airflow: Math.round(this.airflow),
+            normalEnergyUsage: parseFloat(this.normalEnergyUsage.toFixed(2)),
+            staticPressure: parseFloat(this.staticPressure.toFixed(3)),
+            currentTemperature: parseFloat(this.currentTemperature.toFixed(1)),
+            humidity: parseFloat(this.humidity.toFixed(1)),
+            // status: this.checkStatus()
         };
     }
 
-    getData() {
-        return {
-            energyUsage: this.energyUsage,
-            setPointTemperature: this.setPointTemperature,
-            airflow: this.airflow,
-            normalEnergyUsage: this.normalEnergyUsage,
-            staticPressure: this.staticPressure,
-            currentTemperature: this.currentTemperature
+    // Realistic fluctuation model
+    randomFluctuation(value, isTemperature = false) {
+        if (isTemperature) {
+            // Temperature: ±0.5°F to ±2°F (data center grade)
+            const fluctuation = 0.5 + Math.random() * 1.5;
+            return value + (Math.random() > 0.5 ? fluctuation : -fluctuation);
+        } else {
+            // Other metrics: ±7% to ±14% (original behavior)
+            const fluctuationPercent = 0.07 + Math.random() * 0.07;
+            return value * (1 + (Math.random() > 0.5 ? fluctuationPercent : -fluctuationPercent));
         }
     }
-    // Randomly adjust a value by 7% up or down
-    randomFluctuation(value) {
-        const fluctuationPercent = 0.07 + Math.random() * 0.07; // 15%
-        const fluctuation = value * fluctuationPercent;
-        return Math.random() > 0.5
-            ? value + fluctuation
-            : value - fluctuation;
+
+    // Physics-based temperature drift
+    updateTemperature() {
+        const now = Date.now();
+        const deltaTimeMinutes = (now - this.lastUpdateTime) / 60000; // Convert ms to minutes
+        this.lastUpdateTime = now;
+
+        // Gradually drift toward setpoint (± small noise)
+        const driftSpeed = 0.05; // °F per minute
+        const distanceToSetpoint = this.setPointTemperature - this.currentTemperature;
+        this.currentTemperature += driftSpeed * distanceToSetpoint * deltaTimeMinutes;
+
+        // Add environmental noise (±0.5°F)
+        this.currentTemperature += (Math.random() - 0.5) * 1.0;
+
+        // Enforce absolute safety limits
+        this.currentTemperature = Math.max(65, Math.min(85, this.currentTemperature));
     }
 
+    // // Check for abnormal conditions
+    // checkStatus() {
+    //     const tempDeviation = Math.abs(this.currentTemperature - this.setPointTemperature);
+    //     const humidityDeviation = Math.abs(this.humidity - 45); // Ideal humidity 45%
+
+    //     if (this.currentTemperature > 80 || this.currentTemperature < 68) {
+    //         return "CRITICAL";
+    //     } else if (tempDeviation > 5 || humidityDeviation > 10) {
+    //         return "WARNING";
+    //     } else {
+    //         return "NORMAL";
+    //     }
+    // }
+
+    // Main update loop
     update() {
+        // Update temperature with physics model
+        this.updateTemperature();
+
+        // Random fluctuations for other metrics
         this.energyUsage = this.randomFluctuation(this.originalValues.energyUsage);
-        this.setPointTemperature = this.randomFluctuation(this.originalValues.setPointTemperature);
         this.airflow = this.randomFluctuation(this.originalValues.airflow);
         this.staticPressure = this.randomFluctuation(this.originalValues.staticPressure);
-        this.currentTemperature = this.randomFluctuation(this.originalValues.currentTemperature);
 
-        // Normal energy usage might change less frequently
-        if (Math.random() > 0.7) { // 30% chance to change
+        // Humidity fluctuates slowly
+        if (Math.random() > 0.8) { // 20% chance to adjust
+            this.humidity = this.randomFluctuation(this.originalValues.humidity);
+        }
+
+        // Normal energy usage updates less frequently
+        if (Math.random() > 0.7) {
             this.normalEnergyUsage = this.randomFluctuation(this.originalValues.normalEnergyUsage);
         }
-        return this;
-    }
 
+        return this.getData(); // Return current state
+    }
 }
 
 class EnhancedDataCenterEnvironment {
