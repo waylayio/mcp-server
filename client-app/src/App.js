@@ -68,7 +68,7 @@ useEffect(() => {
     reconnectionDelay: 1000,
     timeout: 20000,
     transports: ["websocket"],
-    autoConnect: false
+    autoConnect: true
   });
 
   const onConnect = () => {
@@ -264,6 +264,7 @@ useEffect(() => {
 
       {showAIChat && (
         <MessageComponent 
+          isOpen={showAIChat}
           onClose={() => setShowAIChat(false)} 
           socket={socket} 
         />

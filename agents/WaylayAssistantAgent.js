@@ -32,8 +32,8 @@ class WaylayAssistantAgent {
         });
 
         this.socket.on("message", async (msg) => {
-            console.log(`[${this.agentId}] Received request:`, msg);
             if (msg.data?.request === "askAgent") {
+                console.log(`[${this.agentId}] Received request:`, msg);
                 this.handleRequest(msg.from, msg.data.question, msg.data.sessionId);
             }
         });

@@ -38,8 +38,8 @@ class WeatherAgent {
         });
 
         this.socket.on("message", async (msg) => {
-            console.log(`[${this.agentId}] Received request:`, msg);
             if (msg.data?.request === "get_weather") {
+                console.log(`[${this.agentId}] Received request:`, msg);
                 this.handleWeatherRequest(msg.from, msg.data.city);
             }
         });

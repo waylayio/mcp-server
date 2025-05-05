@@ -28,7 +28,7 @@ const AppHeader = ({ connectionStatus, lastUpdated, error, notification, onAIAss
         <button
           onClick={onAIAssistantClick}
           className="flex items-center gap-2 px-5 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors ease-in-out duration-200 shadow-md"
-        >
+          >
           🤖 Ask AI Assistant
         </button>
       </div>
